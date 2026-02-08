@@ -14,7 +14,6 @@
       --good: rgba(120, 255, 170, .95);
       --bad: rgba(255, 120, 140, .95);
       --shadow: 0 18px 60px rgba(0,0,0,.35);
-      --neon: rgba(0, 255, 120, .95);
     }
     html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:var(--text);overflow:hidden;background:#000;}
     #wrap{position:relative;width:100%;height:100%;}
@@ -36,6 +35,11 @@
       display:flex; gap:10px; align-items:center;
       white-space:nowrap;
     }
+    #leftPill{ gap:12px; }
+    #remainNum{ font-weight:900; }
+    #scorePill{ margin-left:auto; }
+    #scoreNum{ font-weight:900; letter-spacing:.2px; }
+
     #progressWrap{
       flex:1;
       background:var(--hud-bg);
@@ -62,11 +66,6 @@
       border-radius:999px;
       box-shadow: 0 0 14px rgba(0,255,140,.35), 0 0 28px rgba(0,255,140,.18);
     }
-
-    #scorePill{ margin-left:auto; }
-    #scoreNum{ font-weight:900; letter-spacing:.2px; }
-    #leftPill{ gap:12px; }
-    #remainNum{ font-weight:900; }
 
     #nextBtn{
       position:absolute;
@@ -123,7 +122,6 @@
       transition: transform .18s ease, opacity .18s ease;
       will-change: transform, opacity;
     }
-    /* ✅ анимация появления карточки */
     #overlay.show #card{
       transform: translateY(0) scale(1);
       opacity: 1;
@@ -321,7 +319,7 @@
       </div>
 
       <div id="msg"></div>
-      <div id="hint">Верно → блок опускается и становится этажом (+100). Неверно → обугливание, взрыв и исчезновение.</div>
+      <div id="hint">Верно → блок опускается и становится этажом (+100). Неверно → обугливание, взрыв, исчезновение.</div>
     </div>
   </div>
 
@@ -329,7 +327,7 @@
     <div id="startCard">
       <h1>Башня знаний</h1>
       <p>
-        Первый блок падает сам (быстро). Дальше — нажимай <b>Далее</b>.
+        Первый блок падает сам (без долгого ожидания). Дальше — нажимай <b>Далее</b>.
         Когда блок остановится — ответь на вопрос.
         <br/>Верно → блок опускается и становится этажом (+100).
         <br/>Неверно → блок обугливается, взрывается и исчезает.
@@ -379,9 +377,8 @@ const QUESTIONS = [
   { type:"choice", q:"JS в браузере нужен для…", options:["Интерактивности","Фона","Сжатия PNG","DNS"], answer:"Интерактивности" },
 ];
 
-/** Скорости */
+/** Скорости (как было “красиво”) */
 const FALL_SPEED = 760;
-const FIRST_FALL_SPEED = 980;   // ✅ первый блок быстрее
 const DROP_SPEED = 900;
 
 /** Эффекты */
@@ -406,8 +403,8 @@ const LAND_BOUNCE_UP = 10;
 const LAND_BOUNCE_TIME = 0.10;
 
 /** Фейерверк */
-const FIREWORKS_TIME_PERFECT = 2.8; // сек при 9/9
-const FIREWORKS_TIME_SMALL   = 1.4; // сек иначе
+const FIREWORKS_TIME_PERFECT = 2.8;
+const FIREWORKS_TIME_SMALL   = 1.4;
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
@@ -516,7 +513,7 @@ function loadImage(url){
   });
 }
 
-/** Профили */
+/** Profiles */
 function buildTopBottomProfiles(imageData, w, h){
   const d = imageData.data;
   const top = new Array(w).fill(h);
@@ -634,12 +631,11 @@ const state = {
   correct:0,
   wrong:0,
 
-  landingBounce: null, // {fromY,toY,age,dur}
-  fireworksTimer: 0,   // сек
+  landingBounce: null,
+  fireworksTimer: 0,
   fireworksBurstTimer: 0
 };
 
-/** HUD */
 function setNextEnabled(on){
   state.readyForNext = on;
   nextBtn.disabled = !on;
@@ -669,7 +665,6 @@ function computeTowerScale(blocks){
   return Math.min(scaleByWidth, scaleByHeight);
 }
 
-/** Pixel perfect stack */
 function computeStackY(upper, lower){
   const su = state.towerScale;
   const upperMeta = state.blocks[upper.idx];
@@ -700,7 +695,6 @@ function computeStackY(upper, lower){
   return Math.round(yMaxAllowed) - 1;
 }
 
-/** spawn */
 function spawnBlock(){
   if(state.finished) return;
   if(state.blockIndex >= 9){ finishGame(); return; }
@@ -708,8 +702,8 @@ function spawnBlock(){
   const idx = state.blockIndex;
   const {w,h} = blockSize(idx);
 
-  // ✅ первый блок появляется "раньше" (меньше отрицательный y)
-  const startY = (idx === 0) ? (-h * 0.55) : (-h - 30);
+  // ✅ ВАЖНО: первый блок стартует ближе к экрану — ждать меньше (скорость не меняем)
+  const startY = (idx === 0) ? (-h * 0.15) : (-h - 30);
 
   state.current = { idx, w,h, x: alignedXForIdx(idx), y: startY, char:0 };
   state.dropping=false;
@@ -718,12 +712,10 @@ function spawnBlock(){
   setNextEnabled(false);
 }
 
-/** score pop */
 function addScorePop(x,y, text){
   state.scoreFloats.push({ x, y, vx:(Math.random()*2-1)*30, vy:-160-Math.random()*60, life:0.85, age:0, text });
 }
 
-/** sparks */
 function sparksAtSeam(x, y){
   for(let i=0;i<18;i++){
     const a = (-Math.PI/2) + (Math.random()*Math.PI*0.9 - Math.PI*0.45);
@@ -754,16 +746,11 @@ function dustAt(x,y){
   }
 }
 
-/** landing bounce */
 function settleCurrentBlock(){
   const b = state.current;
   let yFinal;
-  if(state.tower.length===0){
-    yFinal = Math.round(groundY() - b.h);
-  } else {
-    const lower = state.tower[state.tower.length - 1];
-    yFinal = computeStackY(b, lower);
-  }
+  if(state.tower.length===0) yFinal = Math.round(groundY() - b.h);
+  else yFinal = computeStackY(b, state.tower[state.tower.length - 1]);
 
   const yUp = Math.max(-200, yFinal - LAND_BOUNCE_UP);
   state.landingBounce = { fromY: yUp, toY: yFinal, age: 0, dur: LAND_BOUNCE_TIME };
@@ -771,6 +758,7 @@ function settleCurrentBlock(){
   b.x = Math.round(b.x);
   b.y = yUp;
 }
+
 function finalizeLand(){
   const b = state.current;
   if(!b) return;
@@ -796,7 +784,6 @@ function finalizeLand(){
   state.current = null;
 }
 
-/** boom */
 function boomAt(block){
   const cx = block.x + block.w/2;
   const cy = block.y + block.h/2;
@@ -840,7 +827,7 @@ function spawnFireworkBurst(){
   const cy = H*0.12 + Math.random()*H*0.28;
 
   const count = 42 + Math.floor(Math.random()*22);
-  const hue = Math.random(); // 0..1
+  const hue = Math.random();
 
   for(let i=0;i<count;i++){
     const a = Math.random()*Math.PI*2;
@@ -857,7 +844,6 @@ function spawnFireworkBurst(){
   }
 }
 
-/** finish */
 function finishGame(){
   state.finished = true;
   setNextEnabled(false);
@@ -867,14 +853,12 @@ function finishGame(){
   stWrong.textContent = String(state.wrong);
   stHeight.textContent = String(state.tower.length);
 
-  // ✅ запускаем фейерверк
   state.fireworksTimer = (state.correct === 9) ? FIREWORKS_TIME_PERFECT : FIREWORKS_TIME_SMALL;
   state.fireworksBurstTimer = 0;
 
   finishLayer.style.display="flex";
 }
 
-/** restart */
 restartBtn.addEventListener("click", async ()=>{
   finishLayer.style.display="none";
   startLayer.style.display="flex";
@@ -890,7 +874,7 @@ function hideOverlayAnimated(){
   setTimeout(()=>{ overlay.style.display="none"; }, 140);
 }
 
-/** update loop */
+/** Update */
 function update(dt){
   if(!state.running) return;
 
@@ -968,7 +952,7 @@ function update(dt){
   }
   state.fireworks = state.fireworks.filter(f => f.age < f.life);
 
-  // bounce
+  // landing bounce
   if(state.landingBounce && state.current){
     const bb = state.landingBounce;
     bb.age += dt;
@@ -994,9 +978,9 @@ function update(dt){
     if(state.waitingAnswer){
       // wait
     } else if(state.dropping){
-      let yTarget;
-      if(state.tower.length===0) yTarget = groundY() - b.h;
-      else yTarget = computeStackY(b, state.tower[state.tower.length - 1]);
+      const yTarget = (state.tower.length===0)
+        ? (groundY() - b.h)
+        : computeStackY(b, state.tower[state.tower.length - 1]);
 
       b.y += DROP_SPEED*dt;
       if(b.y >= yTarget){
@@ -1004,13 +988,10 @@ function update(dt){
         settleCurrentBlock();
       }
     } else {
-      // ✅ первый блок быстрее падает к вопросу
-      const v = (b.idx === 0) ? FIRST_FALL_SPEED : FALL_SPEED;
-
       const topY = (state.tower.length===0 ? groundY() : state.tower[state.tower.length-1].y);
       const stopY = Math.max(80, topY - b.h - 18);
 
-      b.y += v*dt;
+      b.y += FALL_SPEED*dt;
       if(b.y>=stopY){
         b.y=stopY;
         state.waitingAnswer=true;
@@ -1026,7 +1007,7 @@ function update(dt){
   barFill.style.width = pct + "%";
 }
 
-/** draw */
+/** Draw */
 function drawBackground(){
   if(state.bg){
     const img=state.bg;
@@ -1161,12 +1142,11 @@ function draw(){
   for(const fw of state.fireworks){
     const t = fw.age / fw.life;
     const a = Math.max(0, 1 - t);
-    // HSV-ish → RGB простенько
     const h = (fw.hue + t*0.25) % 1;
-    const r = Math.round(140 + 115*Math.sin(h*6.283));
-    const g = Math.round(180 + 75*Math.sin((h+0.33)*6.283));
-    const b = Math.round(200 + 55*Math.sin((h+0.66)*6.283));
-    ctx.fillStyle = `rgba(${r},${g},${b},${0.9*a})`;
+    const rr = Math.round(140 + 115*Math.sin(h*6.283));
+    const gg = Math.round(180 + 75*Math.sin((h+0.33)*6.283));
+    const bb = Math.round(200 + 55*Math.sin((h+0.66)*6.283));
+    ctx.fillStyle = `rgba(${rr},${gg},${bb},${0.9*a})`;
     ctx.beginPath();
     ctx.arc(fw.x, fw.y, fw.r, 0, Math.PI*2);
     ctx.fill();
@@ -1221,14 +1201,8 @@ function showQuestion(){
     ansInput.value="";
   }
 
-  overlay.style.display="flex";
-  requestAnimationFrame(()=> overlay.classList.add("show"));
+  showOverlayAnimated();
   setTimeout(()=>{ if(q.type==="input") ansInput.focus(); }, 50);
-}
-
-function hideQuestion(){
-  overlay.classList.remove("show");
-  setTimeout(()=>{ overlay.style.display="none"; }, 140);
 }
 
 function checkAnswer(userValue){
@@ -1244,7 +1218,7 @@ function checkAnswer(userValue){
     state.dropping = false;
 
     setTimeout(()=>{
-      hideQuestion();
+      hideOverlayAnimated();
       state.waitingAnswer = false;
       if(state.current) state.dropping = true;
       else setNextEnabled(true);
@@ -1277,13 +1251,14 @@ function checkAnswer(userValue){
     requestAnimationFrame(scorchStep);
 
     setTimeout(()=>{
-      hideQuestion();
+      hideOverlayAnimated();
       state.waitingAnswer = false;
 
       if(waitingBlock && waitingBlock === state.current){
         boomAt(waitingBlock);
       }
       state.current = null;
+
       setNextEnabled(true);
     }, 520);
   }
@@ -1358,7 +1333,6 @@ async function startGame(){
   updateRemain();
 
   const missing=[];
-
   try{ state.bg = await loadImage(assetUrl(BG_FILE)); }
   catch{ missing.push(BG_FILE); }
 
@@ -1385,12 +1359,11 @@ async function startGame(){
 
   state.towerScale = computeTowerScale(blocks);
   state.blocks = blocks;
-  state.running = true;
 
-  spawnBlock(); // ✅ первый блок сам и быстрее
+  state.running = true;
+  spawnBlock(); // первый блок сам
 }
 
-/** main loops */
 playBtn.addEventListener("click", async ()=>{
   startLayer.style.display="none";
   await startGame();
