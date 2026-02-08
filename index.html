@@ -62,6 +62,8 @@
 
     #scorePill{ margin-left:auto; }
     #scoreNum{ font-weight:900; letter-spacing:.2px; }
+    #leftPill{ gap:12px; }
+    #remainNum{ font-weight:900; }
 
     #nextBtn{
       position:absolute;
@@ -99,7 +101,17 @@
       border-radius:18px;
       box-shadow:var(--shadow);
       padding:18px 18px 14px;
+
+      transform: translateY(10px) scale(.96);
+      opacity: 0;
+      transition: transform .18s ease, opacity .18s ease;
+      will-change: transform, opacity;
     }
+    #overlay.show #card{
+      transform: translateY(0) scale(1);
+      opacity: 1;
+    }
+
     #cardHeader{
       display:flex; align-items:flex-start; justify-content:space-between;
       gap:12px; margin-bottom:12px;
@@ -201,7 +213,7 @@
       z-index: 7;
     }
     #finishCard{
-      width:min(680px, calc(100% - 24px));
+      width:min(720px, calc(100% - 24px));
       border-radius:20px;
       border:1px solid rgba(255,255,255,.14);
       background: rgba(18, 20, 28, .75);
@@ -220,8 +232,25 @@
     #finishText{
       color: rgba(255,255,255,.82);
       font-size:18px;
-      margin: 0 0 14px;
+      margin: 0 0 10px;
     }
+    #stats{
+      display:flex;
+      justify-content:center;
+      gap:12px;
+      flex-wrap:wrap;
+      margin: 10px 0 14px;
+    }
+    .stat{
+      background: rgba(255,255,255,.07);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 14px;
+      padding: 10px 12px;
+      min-width: 160px;
+      text-align:left;
+    }
+    .stat b{ font-size:18px; }
+    .stat div{ color: rgba(255,255,255,.70); font-size:12px; margin-top:4px; }
     #restart{
       display:inline-flex; gap:10px; align-items:center;
       padding:12px 14px;
@@ -240,12 +269,18 @@
   <canvas id="c"></canvas>
 
   <div id="hud">
-    <div class="pill">Башня: <b id="heightTxt">0</b> блок(ов)</div>
+    <div class="pill" id="leftPill">
+      Башня: <b id="heightTxt">0</b>
+      <span style="opacity:.5">|</span>
+      Осталось: <b id="remainNum">9</b>
+    </div>
+
     <div id="progressWrap">
       Прогресс
       <div id="bar"><div></div></div>
       <span id="pct">0%</span>
     </div>
+
     <div class="pill" id="scorePill">Счёт: <b id="scoreNum">0</b></div>
   </div>
 
@@ -269,7 +304,7 @@
       </div>
 
       <div id="msg"></div>
-      <div id="hint">Верно → блок опускается и становится этажом. Неверно → блок взрывается и исчезает.</div>
+      <div id="hint">Верно → блок опускается и становится этажом (+100). Неверно → обугливание, взрыв и исчезает.</div>
     </div>
   </div>
 
@@ -279,8 +314,8 @@
       <p>
         Первый блок падает сам. Дальше — нажимай <b>Далее</b>.
         Когда блок остановится — ответь на вопрос.
-        <br/>Верно → блок опускается и становится этажом башни (+100).
-        <br/>Неверно → блок взрывается и исчезает.
+        <br/>Верно → блок опускается и становится этажом (+100).
+        <br/>Неверно → блок обугливается, взрывается и исчезает.
       </p>
       <button id="play">▶ Начать</button>
       <div id="err">
@@ -294,6 +329,13 @@
     <div id="finishCard">
       <div id="finishTitle">Молодец!</div>
       <div id="finishText">Тобой заработано: <b id="finishScore">0</b> баллов</div>
+
+      <div id="stats">
+        <div class="stat"><b id="stCorrect">0</b><div>правильных ответов</div></div>
+        <div class="stat"><b id="stWrong">0</b><div>неправильных ответов</div></div>
+        <div class="stat"><b id="stHeight">0</b><div>блоков в башне</div></div>
+      </div>
+
       <button id="restart">↻ Сыграть ещё раз</button>
     </div>
   </div>
@@ -331,15 +373,19 @@ const SHAKE_ON_LAND = 7;
 /** Прогресс */
 const TARGET_BLOCKS_FOR_100 = 9;
 
-/** Влезание на экран */
+/** Влезание */
 const SAFE_TOP_MARGIN = 86;
 const SAFE_BOTTOM_MARGIN = 100;
 const DESIRED_TOWER_WIDTH = () => Math.min(window.innerWidth * 0.38, 360);
 
-/** TRIM */
-const TRIM_ALPHA_MIN = 34;     // можно поднять/опустить при необходимости
-const PROFILE_ALPHA_MIN = 22;  // порог для профиля контакта (верх/низ)
+/** TRIM/PROFILE */
+const TRIM_ALPHA_MIN = 34;
+const PROFILE_ALPHA_MIN = 22;
 const CENTROID_ALPHA_MIN = 24;
+
+/** Пружинящий “bounce” при приземлении */
+const LAND_BOUNCE_UP = 10;      // px вверх перед финальным прижатием
+const LAND_BOUNCE_TIME = 0.10;  // сек
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
@@ -358,17 +404,20 @@ const playBtn = document.getElementById("play");
 
 const finishLayer = document.getElementById("finish");
 const finishScoreEl = document.getElementById("finishScore");
+const stCorrect = document.getElementById("stCorrect");
+const stWrong = document.getElementById("stWrong");
+const stHeight = document.getElementById("stHeight");
 const restartBtn = document.getElementById("restart");
 
 const errBox = document.getElementById("err");
 const errList = document.getElementById("errList");
 
 const heightTxt = document.getElementById("heightTxt");
+const remainNum = document.getElementById("remainNum");
 const pctTxt = document.getElementById("pct");
 const barFill = document.querySelector("#bar > div");
 
 const scoreNum = document.getElementById("scoreNum");
-
 const nextBtn = document.getElementById("nextBtn");
 
 let W=0,H=0,DPR=1;
@@ -385,9 +434,7 @@ resize();
 
 /** Audio */
 let audioCtx=null;
-function ensureAudio(){
-  if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-}
+function ensureAudio(){ if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
 function playBoom(){
   ensureAudio();
   const t = audioCtx.currentTime;
@@ -437,9 +484,7 @@ function playGood(){
 }
 
 /** Assets */
-function assetUrl(file){
-  return new URL(file, new URL(".", window.location.href)).toString();
-}
+function assetUrl(file){ return new URL(file, new URL(".", window.location.href)).toString(); }
 function loadImage(url){
   return new Promise((resolve, reject)=>{
     const img=new Image();
@@ -449,31 +494,27 @@ function loadImage(url){
   });
 }
 
-/** Построение профиля верх/низ по каждому X (в пикселях обрезанного изображения) */
+/** Профили */
 function buildTopBottomProfiles(imageData, w, h){
   const d = imageData.data;
-  const top = new Array(w).fill(h);     // если пусто — h
-  const bottom = new Array(w).fill(-1); // если пусто — -1
+  const top = new Array(w).fill(h);
+  const bottom = new Array(w).fill(-1);
 
   for(let x=0;x<w;x++){
-    // top
     for(let y=0;y<h;y++){
       const a = d[(y*w + x)*4 + 3];
       if(a >= PROFILE_ALPHA_MIN){ top[x]=y; break; }
     }
-    // bottom
     for(let y=h-1;y>=0;y--){
       const a = d[(y*w + x)*4 + 3];
       if(a >= PROFILE_ALPHA_MIN){ bottom[x]=y; break; }
     }
-    // запасной вариант, если колонка почти пустая
     if(bottom[x] < 0){ bottom[x] = h-1; }
     if(top[x] >= h){ top[x] = 0; }
   }
   return { top, bottom };
 }
 
-/** trim + centroid + профили */
 function trimAndCentroidAndProfiles(img){
   const c=document.createElement("canvas");
   c.width=img.width; c.height=img.height;
@@ -533,11 +574,11 @@ function trimAndCentroidAndProfiles(img){
   });
 }
 
-/** Game state */
+/** State */
 const state = {
   running:false,
   bg:null,
-  blocks:[],     // {img,w,h,cx,top,bottom}
+  blocks:[],
   towerScale:1,
 
   tower:[],
@@ -546,6 +587,7 @@ const state = {
   particles:[],
   smokes:[],
   rings:[],
+  sparks:[],
   flash:0,
 
   cameraShake:0,
@@ -564,18 +606,28 @@ const state = {
   finished:false,
 
   score:0,
-  scoreFloats:[]
+  scoreFloats:[],
+
+  correct:0,
+  wrong:0,
+
+  // bounce state
+  landingBounce: null, // {fromY,toY,age,dur}
 };
 
+/** HUD helpers */
 function setNextEnabled(on){
   state.readyForNext = on;
   nextBtn.disabled = !on;
+}
+function updateRemain(){
+  const remain = Math.max(0, 9 - state.questionIndex);
+  remainNum.textContent = String(remain);
 }
 
 function groundY(){
   return H - 70 + state.towerOffsetY;
 }
-
 function alignedXForIdx(idx){
   const b = state.blocks[idx];
   const cxScaled = b.cx * state.towerScale;
@@ -585,90 +637,63 @@ function blockSize(idx){
   const b = state.blocks[idx];
   return { w: b.w*state.towerScale, h: b.h*state.towerScale };
 }
-
 function computeTowerScale(blocks){
   const maxW = Math.max(...blocks.map(b => b.w));
   const totalH = blocks.reduce((s,b)=>s+b.h,0);
-
   const scaleByWidth = DESIRED_TOWER_WIDTH() / maxW;
   const availableH = Math.max(220, H - SAFE_TOP_MARGIN - SAFE_BOTTOM_MARGIN);
   const scaleByHeight = availableH / totalH;
-
   return Math.min(scaleByWidth, scaleByHeight);
 }
 
-/**
- * Пиксель-точное вычисление Y для верхнего блока (upper),
- * чтобы он максимально "поднялся" и коснулся нижнего (lower) без пересечения.
- */
+/** Пиксельно точный стек */
 function computeStackY(upper, lower){
   const su = state.towerScale;
   const upperMeta = state.blocks[upper.idx];
   const lowerMeta = state.blocks[lower.idx];
 
-  const upperTopArr = upperMeta.top;
-  const upperBotArr = upperMeta.bottom;
-  const lowerTopArr = lowerMeta.top;
-
-  // overlap диапазон в мировых координатах (по X)
   const overlapLeft = Math.max(upper.x, lower.x);
   const overlapRight = Math.min(upper.x + upper.w, lower.x + lower.w);
 
-  // если вдруг нет пересечения — fallback
   if(overlapRight <= overlapLeft + 2){
     return Math.round(lower.y - upper.h);
   }
 
-  // хотим максимально большой y, но чтобы:
-  // y + bottomUpper(xu)*su <= lower.y + topLower(xl)*su  для всех колонок
-  // => y <= lower.y + topLower*su - bottomUpper*su
-  // => берём минимум по колонкам
   let yMaxAllowed = Infinity;
+  const step = 2;
 
-  const step = 2; // шаг по X в пикселях экрана
   for(let wx = overlapLeft; wx <= overlapRight; wx += step){
     const xu = Math.floor((wx - upper.x) / su);
     const xl = Math.floor((wx - lower.x) / su);
-
     if(xu < 0 || xu >= upperMeta.w) continue;
     if(xl < 0 || xl >= lowerMeta.w) continue;
 
-    const bu = upperBotArr[xu];
-    const tl = lowerTopArr[xl];
+    const bu = upperMeta.bottom[xu];
+    const tl = lowerMeta.top[xl];
 
     const allowed = lower.y + tl*su - bu*su;
     if(allowed < yMaxAllowed) yMaxAllowed = allowed;
   }
-
-  // Финальная точка — чуть-чуть прижмём (на 1px), чтобы не оставалось микродырок из-за округления
-  const y = Math.floor(yMaxAllowed) + 1; // +1 поднимает верхний блок на 1px вниз? (аккуратно)
-  // Правильнее: прижать вниз — уменьшить y? Нет: y — верх, больше y = ниже.
-  // Чтобы "плотнее" без щели, делаем блок ЧУТЬ ВЫШЕ (меньше y):
+  // плотнее без щелей
   return Math.round(yMaxAllowed) - 1;
 }
 
+/** spawn */
 function spawnBlock(){
   if(state.finished) return;
-  if(state.blockIndex >= 9){
-    finishGame();
-    return;
-  }
+  if(state.blockIndex >= 9){ finishGame(); return; }
 
   const idx = state.blockIndex;
   const {w,h} = blockSize(idx);
 
-  state.current = {
-    idx,
-    w,h,
-    x: alignedXForIdx(idx),
-    y: -h - 30
-  };
-
+  state.current = { idx, w,h, x: alignedXForIdx(idx), y: -h - 30, char:0 };
   state.dropping=false;
   state.waitingAnswer=false;
+  state.landingBounce=null;
   setNextEnabled(false);
 }
 
+/** score pop */
 function addScorePop(x,y, text){
   state.scoreFloats.push({
     x, y,
@@ -680,23 +705,74 @@ function addScorePop(x,y, text){
   });
 }
 
+/** sparks at seam */
+function sparksAtSeam(x, y){
+  for(let i=0;i<18;i++){
+    const a = (-Math.PI/2) + (Math.random()*Math.PI*0.9 - Math.PI*0.45);
+    const sp = 220 + Math.random()*360;
+    state.sparks.push({
+      x: x + (Math.random()*40 - 20),
+      y: y + (Math.random()*6 - 3),
+      vx: Math.cos(a)*sp,
+      vy: Math.sin(a)*sp - (40+Math.random()*60),
+      life: 0.45 + Math.random()*0.2,
+      age: 0
+    });
+  }
+}
+
+/** smoke/dust */
+function dustAt(x,y){
+  for(let i=0;i<10;i++){
+    const a=Math.random()*Math.PI*2;
+    const sp=30+Math.random()*110;
+    state.smokes.push({
+      x:x + (Math.random()*18-9),
+      y:y + (Math.random()*10-5),
+      vx:Math.cos(a)*sp,
+      vy:Math.sin(a)*sp - (30+Math.random()*40),
+      life:0.55+Math.random()*0.35,
+      age:0,
+      rad: 10+Math.random()*14
+    });
+  }
+}
+
+/** settle with bounce */
 function settleCurrentBlock(){
-  const ground = groundY();
   const b = state.current;
 
-  let yTarget;
+  let yFinal;
   if(state.tower.length===0){
-    yTarget = Math.round(ground - b.h);
+    yFinal = Math.round(groundY() - b.h);
   } else {
     const lower = state.tower[state.tower.length - 1];
-    yTarget = computeStackY(b, lower);
+    yFinal = computeStackY(b, lower);
   }
 
+  // bounce: сначала чуть выше, потом вниз в финал
+  const yUp = Math.max(-200, yFinal - LAND_BOUNCE_UP);
+  state.landingBounce = { fromY: yUp, toY: yFinal, age: 0, dur: LAND_BOUNCE_TIME };
+
   b.x = Math.round(b.x);
-  b.y = Math.round(yTarget);
+  b.y = yUp;
+
+  // Запомним временно “собираемый” блок, добавим в башню только после bounce
+}
+
+/** finalize land */
+function finalizeLand(){
+  const b = state.current;
+  if(!b) return;
+
+  // искры из шва (x по центру башни, y на стыке)
+  const seamY = b.y + b.h;
+  sparksAtSeam(W/2, seamY);
 
   state.tower.push({
-    x:b.x, y:b.y, w:b.w, h:b.h, idx:b.idx,
+    x: Math.round(b.x),
+    y: Math.round(b.y),
+    w: b.w, h: b.h, idx: b.idx,
     squash:1.0, squashV:0.0
   });
 
@@ -705,13 +781,14 @@ function settleCurrentBlock(){
   scoreNum.textContent = String(state.score);
   addScorePop(W/2 + 70, b.y + 30, `+${SCORE_PER_BLOCK}`);
 
-  state.current=null;
-
-  dustAt(W/2, b.y + b.h);
+  dustAt(W/2, seamY);
   state.cameraShake = Math.max(state.cameraShake, SHAKE_ON_LAND);
   state.towerOffsetV -= 120;
+
+  state.current = null;
 }
 
+/** boom + scorch */
 function boomAt(block){
   const cx = block.x + block.w/2;
   const cy = block.y + block.h/2;
@@ -732,16 +809,16 @@ function boomAt(block){
     });
   }
 
-  for(let i=0;i<12;i++){
+  for(let i=0;i<14;i++){
     const a=Math.random()*Math.PI*2;
-    const sp=50+Math.random()*170;
+    const sp=50+Math.random()*210;
     state.smokes.push({
       x:cx,y:cy,
       vx:Math.cos(a)*sp,
-      vy:Math.sin(a)*sp-(70+Math.random()*90),
-      life:1.0+Math.random()*0.6,
+      vy:Math.sin(a)*sp-(90+Math.random()*120),
+      life:1.1+Math.random()*0.8,
       age:0,
-      rad: 18+Math.random()*22
+      rad: 22+Math.random()*26
     });
   }
 
@@ -749,38 +826,43 @@ function boomAt(block){
   playBoom();
 }
 
-function dustAt(x,y){
-  for(let i=0;i<10;i++){
-    const a=Math.random()*Math.PI*2;
-    const sp=30+Math.random()*110;
-    state.smokes.push({
-      x:x + (Math.random()*18-9),
-      y:y + (Math.random()*10-5),
-      vx:Math.cos(a)*sp,
-      vy:Math.sin(a)*sp - (30+Math.random()*40),
-      life:0.55+Math.random()*0.35,
-      age:0,
-      rad: 10+Math.random()*14
-    });
-  }
-}
-
+/** finish */
 function finishGame(){
   state.finished = true;
   setNextEnabled(false);
+
   finishScoreEl.textContent = String(state.score);
+  stCorrect.textContent = String(state.correct);
+  stWrong.textContent = String(state.wrong);
+  stHeight.textContent = String(state.tower.length);
+
   finishLayer.style.display="flex";
 }
 
+/** restart */
 restartBtn.addEventListener("click", async ()=>{
   finishLayer.style.display="none";
   startLayer.style.display="flex";
 });
 
+/** card show/hide with animation */
+function showOverlayAnimated(){
+  overlay.style.display="flex";
+  requestAnimationFrame(()=> overlay.classList.add("show"));
+}
+function hideOverlayAnimated(){
+  overlay.classList.remove("show");
+  setTimeout(()=>{ overlay.style.display="none"; }, 140);
+}
+
 /** Update */
 function update(dt){
   if(!state.running) return;
 
+  // remain
+  updateRemain();
+
+  // camera shake
   if(state.cameraShake>0){
     state.cameraShake=Math.max(0, state.cameraShake - dt*22);
     const s=state.cameraShake;
@@ -792,7 +874,7 @@ function update(dt){
 
   state.flash = Math.max(0, state.flash - dt*3.8);
 
-  // пружина земли
+  // ground spring
   {
     const k=55, damp=10;
     const a = -k*(state.towerOffsetY) - damp*state.towerOffsetV;
@@ -801,7 +883,7 @@ function update(dt){
     state.towerOffsetY = Math.max(-10, Math.min(10, state.towerOffsetY));
   }
 
-  // пружина блоков
+  // tower squash
   for(const b of state.tower){
     const k=40, damp=8;
     const a=-k*(b.squash-1)-damp*b.squashV;
@@ -810,46 +892,69 @@ function update(dt){
     b.squash = Math.max(0.88, Math.min(1.08, b.squash));
   }
 
-  // частицы
+  // particles
   for(const p of state.particles){
-    p.age += dt;
-    p.vy += 980*dt;
-    p.x  += p.vx*dt;
-    p.y  += p.vy*dt;
+    p.age += dt; p.vy += 980*dt; p.x += p.vx*dt; p.y += p.vy*dt;
   }
   state.particles = state.particles.filter(p => p.age < p.life);
 
-  // дым
+  // smoke
   for(const s of state.smokes){
-    s.age += dt;
-    s.vy += 120*dt;
-    s.x  += s.vx*dt;
-    s.y  += s.vy*dt;
+    s.age += dt; s.vy += 120*dt; s.x += s.vx*dt; s.y += s.vy*dt;
   }
   state.smokes = state.smokes.filter(s => s.age < s.life);
 
-  // волна
+  // ring
   for(const r of state.rings){
-    r.age += dt;
-    r.r += r.vr*dt;
+    r.age += dt; r.r += r.vr*dt;
   }
   state.rings = state.rings.filter(r => r.age < r.life);
 
-  // "+100"
+  // sparks
+  for(const sp of state.sparks){
+    sp.age += dt;
+    sp.vy += 980*dt;
+    sp.x += sp.vx*dt;
+    sp.y += sp.vy*dt;
+    sp.vx *= (1 - dt*1.8);
+  }
+  state.sparks = state.sparks.filter(s => s.age < s.life);
+
+  // score floats
   for(const f of state.scoreFloats){
-    f.age += dt;
-    f.vy += 260*dt;
-    f.x  += f.vx*dt;
-    f.y  += f.vy*dt;
+    f.age += dt; f.vy += 260*dt; f.x += f.vx*dt; f.y += f.vy*dt;
   }
   state.scoreFloats = state.scoreFloats.filter(f => f.age < f.life);
 
-  // текущий блок
-  if(state.current){
-    const b=state.current;
+  // bounce step
+  if(state.landingBounce && state.current){
+    const bb = state.landingBounce;
+    bb.age += dt;
+    const t = Math.min(1, bb.age / bb.dur);
+    // easing
+    const ease = 1 - Math.pow(1 - t, 3);
+    state.current.y = Math.round(bb.fromY + (bb.toY - bb.fromY)*ease);
+
+    // чуть “сжатие” нижнего блока
+    if(state.tower.length>0){
+      const last = state.tower[state.tower.length-1];
+      last.squashV += 14 * dt;
+    }
+
+    if(t >= 1){
+      state.landingBounce = null;
+      // финальный y уже стоит, фиксируем блок как этаж
+      finalizeLand();
+      setNextEnabled(true);
+    }
+  }
+
+  // current block movement
+  if(state.current && !state.landingBounce){
+    const b = state.current;
 
     if(state.waitingAnswer){
-      // ждём
+      // wait
     } else if(state.dropping){
       let yTarget;
       if(state.tower.length===0){
@@ -862,12 +967,13 @@ function update(dt){
       b.y += DROP_SPEED*dt;
       if(b.y >= yTarget){
         b.y = yTarget;
+        // начинаем bounce
         settleCurrentBlock();
-        setNextEnabled(true);
       }
     } else {
-      // остановка перед вопросом
-      const stopY = Math.max(80, (state.tower.length===0 ? groundY() : state.tower[state.tower.length-1].y) - b.h - 18);
+      // stop before question
+      const topY = (state.tower.length===0 ? groundY() : state.tower[state.tower.length-1].y);
+      const stopY = Math.max(80, topY - b.h - 18);
       b.y += FALL_SPEED*dt;
       if(b.y>=stopY){
         b.y=stopY;
@@ -877,6 +983,7 @@ function update(dt){
     }
   }
 
+  // hud progress
   heightTxt.textContent = String(state.tower.length);
   const pct = Math.max(0, Math.min(100, Math.round((state.tower.length / TARGET_BLOCKS_FOR_100)*100)));
   pctTxt.textContent = pct + "%";
@@ -902,8 +1009,9 @@ function drawBackground(){
   ctx.fillRect(0,H-70,W,70);
 }
 
-function drawBlock(o, glow=false, squash=1.0){
+function drawBlock(o, glow=false, squash=1.0, char=0){
   const img = state.blocks[o.idx].img;
+
   ctx.save();
   ctx.shadowColor = glow ? "rgba(120,190,255,.35)" : "rgba(0,0,0,.45)";
   ctx.shadowBlur  = glow ? 18 : 14;
@@ -918,6 +1026,21 @@ function drawBlock(o, glow=false, squash=1.0){
   ctx.translate(-cx, -cy);
 
   ctx.drawImage(img, o.x, o.y, o.w, o.h);
+
+  // эффект обугливания (черная полупрозрачная маска)
+  if(char > 0){
+    ctx.globalCompositeOperation = "source-atop";
+    ctx.fillStyle = `rgba(0,0,0,${0.70*char})`;
+    ctx.fillRect(o.x-2, o.y-2, o.w+4, o.h+4);
+
+    // чуть красноватого “жара”
+    ctx.globalCompositeOperation = "screen";
+    ctx.fillStyle = `rgba(255,120,60,${0.10*char})`;
+    ctx.fillRect(o.x-2, o.y-2, o.w+4, o.h+4);
+
+    ctx.globalCompositeOperation = "source-over";
+  }
+
   ctx.restore();
 }
 
@@ -952,13 +1075,14 @@ function draw(){
   drawBackground();
 
   for(const b of state.tower){
-    drawBlock(b, false, b.squash);
+    drawBlock(b, false, b.squash, 0);
   }
 
   if(state.current){
-    drawBlock(state.current, true, 1.0);
+    drawBlock(state.current, true, 1.0, state.current.char || 0);
   }
 
+  // smoke
   for(const s of state.smokes){
     const t = s.age / s.life;
     const a = (1 - t) * 0.35;
@@ -969,6 +1093,7 @@ function draw(){
     ctx.fill();
   }
 
+  // ring
   for(const r of state.rings){
     const t = r.age / r.life;
     const a = (1 - t) * 0.55;
@@ -979,6 +1104,19 @@ function draw(){
     ctx.stroke();
   }
 
+  // sparks
+  for(const sp of state.sparks){
+    const t = sp.age / sp.life;
+    const a = Math.max(0, 1 - t);
+    ctx.strokeStyle = `rgba(255, 220, 140, ${0.9*a})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(sp.x, sp.y);
+    ctx.lineTo(sp.x - sp.vx*0.012, sp.y - sp.vy*0.012);
+    ctx.stroke();
+  }
+
+  // particles
   for(const p of state.particles){
     const a = 1 - (p.age/p.life);
     ctx.fillStyle = `rgba(255, 200, 120, ${0.78*a})`;
@@ -1014,7 +1152,6 @@ function showQuestion(){
   const qi = state.questionIndex;
   const q = QUESTIONS[qi];
 
-  overlay.style.display="flex";
   msgEl.textContent="";
   answersEl.innerHTML="";
   inputRow.style.display="none";
@@ -1035,37 +1172,64 @@ function showQuestion(){
     answersEl.style.display="none";
     inputRow.style.display="flex";
     ansInput.value="";
-    ansInput.focus();
   }
-}
 
-function hideQuestion(){ overlay.style.display="none"; }
+  showOverlayAnimated();
+  setTimeout(()=>{ if(q.type==="input") ansInput.focus(); }, 50);
+}
 
 function checkAnswer(userValue){
   const qi = state.questionIndex;
   const q = QUESTIONS[qi];
   const ok = normalizeAnswer(userValue) === normalizeAnswer(q.answer);
-
   const waitingBlock = state.current;
 
   if(ok){
+    state.correct++;
     msgEl.innerHTML = `<span style="color: var(--good); font-weight:900;">Верно!</span> Блок опускается (+100).`;
     playGood();
     state.dropping = false;
 
     setTimeout(()=>{
-      hideQuestion();
+      hideOverlayAnimated();
       state.waitingAnswer = false;
       if(state.current) state.dropping = true;
       else setNextEnabled(true);
     }, 220);
 
   } else {
-    msgEl.innerHTML = `<span style="color: var(--bad); font-weight:900;">Неверно!</span> Блок взрывается и исчезает.`;
+    state.wrong++;
+    msgEl.innerHTML = `<span style="color: var(--bad); font-weight:900;">Неверно!</span> Блок обугливается и исчезает.`;
     state.dropping = false;
 
+    // обугливание (0.35 сек), потом взрыв и исчезновение
+    const scorchDur = 0.35;
+    let elapsed = 0;
+
+    function scorchStep(){
+      if(!state.current || state.current !== waitingBlock) return;
+      elapsed += 1/60;
+      state.current.char = Math.min(1, elapsed / scorchDur);
+      // немного дыма
+      if(Math.random() < 0.25){
+        state.smokes.push({
+          x: waitingBlock.x + waitingBlock.w/2 + (Math.random()*30-15),
+          y: waitingBlock.y + waitingBlock.h/2 + (Math.random()*20-10),
+          vx: (Math.random()*2-1)*40,
+          vy: -80 - Math.random()*80,
+          life:0.6+Math.random()*0.4,
+          age:0,
+          rad: 14+Math.random()*18
+        });
+      }
+      if(elapsed < scorchDur){
+        requestAnimationFrame(scorchStep);
+      }
+    }
+    requestAnimationFrame(scorchStep);
+
     setTimeout(()=>{
-      hideQuestion();
+      hideOverlayAnimated();
       state.waitingAnswer = false;
 
       if(waitingBlock && waitingBlock === state.current){
@@ -1074,7 +1238,7 @@ function checkAnswer(userValue){
       state.current = null;
 
       setNextEnabled(true);
-    }, 280);
+    }, 520);
   }
 
   state.blockIndex++;
@@ -1112,17 +1276,21 @@ async function startGame(){
   Object.assign(state, {
     running:false, bg:null, blocks:[], towerScale:1,
     tower:[], current:null,
-    particles:[], smokes:[], rings:[], flash:0,
+    particles:[], smokes:[], rings:[], sparks:[], flash:0,
     cameraShake:0, cameraX:0, cameraY:0,
     towerOffsetY:0, towerOffsetV:0,
     questionIndex:0, waitingAnswer:false, dropping:false,
     blockIndex:0, readyForNext:false,
     finished:false,
     score:0,
-    scoreFloats:[]
+    scoreFloats:[],
+    correct:0,
+    wrong:0,
+    landingBounce:null,
   });
   scoreNum.textContent = "0";
   setNextEnabled(false);
+  updateRemain();
 
   const missing=[];
 
