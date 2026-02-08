@@ -60,16 +60,9 @@
       border-radius:999px;
     }
 
-    /* счёт справа */
-    #scorePill{
-      margin-left:auto;
-    }
-    #scoreNum{
-      font-weight:900;
-      letter-spacing:.2px;
-    }
+    #scorePill{ margin-left:auto; }
+    #scoreNum{ font-weight:900; letter-spacing:.2px; }
 
-    /* Кнопка Далее — снизу рядом с башней */
     #nextBtn{
       position:absolute;
       left:50%;
@@ -200,7 +193,6 @@
     #err ul{ margin:8px 0 0 18px; }
     code{background:rgba(255,255,255,.08); padding:2px 6px; border-radius:8px; border:1px solid rgba(255,255,255,.12);}
 
-    /* Финальный экран */
     #finish{
       position:absolute; inset:0;
       display:none; align-items:center; justify-content:center;
@@ -287,7 +279,7 @@
       <p>
         Первый блок падает сам. Дальше — нажимай <b>Далее</b>.
         Когда блок остановится — ответь на вопрос.
-        <br/>Верно → блок опускается и становится этажом башни.
+        <br/>Верно → блок опускается и становится этажом башни (+100).
         <br/>Неверно → блок взрывается и исчезает.
       </p>
       <button id="play">▶ Начать</button>
@@ -344,14 +336,10 @@ const SAFE_TOP_MARGIN = 86;
 const SAFE_BOTTOM_MARGIN = 100;
 const DESIRED_TOWER_WIDTH = () => Math.min(window.innerWidth * 0.38, 360);
 
-/** TRIM — чуть агрессивнее, чтобы убрать прозрачные каймы */
-const TRIM_ALPHA_MIN = 34;
+/** TRIM */
+const TRIM_ALPHA_MIN = 34;     // можно поднять/опустить при необходимости
+const PROFILE_ALPHA_MIN = 22;  // порог для профиля контакта (верх/низ)
 const CENTROID_ALPHA_MIN = 24;
-
-/** СНАП (прижать блоки вплотную) */
-const CONTACT_SNAP_PX = 10;
-/** дополнительный "дожим" всегда, если виден зазор */
-const EXTRA_PRESS_PX = 2;
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
@@ -461,8 +449,32 @@ function loadImage(url){
   });
 }
 
-/** trim + centroid */
-function trimAndCentroid(img){
+/** Построение профиля верх/низ по каждому X (в пикселях обрезанного изображения) */
+function buildTopBottomProfiles(imageData, w, h){
+  const d = imageData.data;
+  const top = new Array(w).fill(h);     // если пусто — h
+  const bottom = new Array(w).fill(-1); // если пусто — -1
+
+  for(let x=0;x<w;x++){
+    // top
+    for(let y=0;y<h;y++){
+      const a = d[(y*w + x)*4 + 3];
+      if(a >= PROFILE_ALPHA_MIN){ top[x]=y; break; }
+    }
+    // bottom
+    for(let y=h-1;y>=0;y--){
+      const a = d[(y*w + x)*4 + 3];
+      if(a >= PROFILE_ALPHA_MIN){ bottom[x]=y; break; }
+    }
+    // запасной вариант, если колонка почти пустая
+    if(bottom[x] < 0){ bottom[x] = h-1; }
+    if(top[x] >= h){ top[x] = 0; }
+  }
+  return { top, bottom };
+}
+
+/** trim + centroid + профили */
+function trimAndCentroidAndProfiles(img){
   const c=document.createElement("canvas");
   c.width=img.width; c.height=img.height;
   const g=c.getContext("2d");
@@ -484,16 +496,16 @@ function trimAndCentroid(img){
         if(y>maxY) maxY=y;
       }
       if(a >= CENTROID_ALPHA_MIN){
-        const w=a;
-        sumA += w;
-        sumX += x*w;
-        sumY += y*w;
+        const wgt=a;
+        sumA += wgt;
+        sumX += x*wgt;
+        sumY += y*wgt;
       }
     }
   }
 
   if(maxX<0 || maxY<0){
-    return Promise.resolve({ img, w: img.width, h: img.height, cx: img.width/2, cy: img.height/2 });
+    return Promise.resolve({ img, w: img.width, h: img.height, cx: img.width/2, cy: img.height/2, top:null, bottom:null });
   }
 
   const w = (maxX-minX+1);
@@ -504,6 +516,9 @@ function trimAndCentroid(img){
   const og=outC.getContext("2d");
   og.drawImage(c, minX, minY, w, h, 0, 0, w, h);
 
+  const cropped = og.getImageData(0,0,w,h);
+  const { top, bottom } = buildTopBottomProfiles(cropped, w, h);
+
   let cx=w/2, cy=h/2;
   if(sumA>0){
     cx = (sumX/sumA) - minX;
@@ -513,7 +528,7 @@ function trimAndCentroid(img){
   const out=new Image();
   out.src=outC.toDataURL("image/png");
   return new Promise((res,rej)=>{
-    out.onload=()=>res({ img: out, w, h, cx, cy });
+    out.onload=()=>res({ img: out, w, h, cx, cy, top, bottom });
     out.onerror=rej;
   });
 }
@@ -522,7 +537,7 @@ function trimAndCentroid(img){
 const state = {
   running:false,
   bg:null,
-  blocks:[],
+  blocks:[],     // {img,w,h,cx,top,bottom}
   towerScale:1,
 
   tower:[],
@@ -549,7 +564,7 @@ const state = {
   finished:false,
 
   score:0,
-  scoreFloats:[] // {x,y,vx,vy,life,age,text}
+  scoreFloats:[]
 };
 
 function setNextEnabled(on){
@@ -559,11 +574,6 @@ function setNextEnabled(on){
 
 function groundY(){
   return H - 70 + state.towerOffsetY;
-}
-function towerTopY(){
-  const ground = groundY();
-  if(state.tower.length===0) return ground;
-  return Math.min(...state.tower.map(b => b.y));
 }
 
 function alignedXForIdx(idx){
@@ -581,11 +591,60 @@ function computeTowerScale(blocks){
   const totalH = blocks.reduce((s,b)=>s+b.h,0);
 
   const scaleByWidth = DESIRED_TOWER_WIDTH() / maxW;
-
   const availableH = Math.max(220, H - SAFE_TOP_MARGIN - SAFE_BOTTOM_MARGIN);
   const scaleByHeight = availableH / totalH;
 
   return Math.min(scaleByWidth, scaleByHeight);
+}
+
+/**
+ * Пиксель-точное вычисление Y для верхнего блока (upper),
+ * чтобы он максимально "поднялся" и коснулся нижнего (lower) без пересечения.
+ */
+function computeStackY(upper, lower){
+  const su = state.towerScale;
+  const upperMeta = state.blocks[upper.idx];
+  const lowerMeta = state.blocks[lower.idx];
+
+  const upperTopArr = upperMeta.top;
+  const upperBotArr = upperMeta.bottom;
+  const lowerTopArr = lowerMeta.top;
+
+  // overlap диапазон в мировых координатах (по X)
+  const overlapLeft = Math.max(upper.x, lower.x);
+  const overlapRight = Math.min(upper.x + upper.w, lower.x + lower.w);
+
+  // если вдруг нет пересечения — fallback
+  if(overlapRight <= overlapLeft + 2){
+    return Math.round(lower.y - upper.h);
+  }
+
+  // хотим максимально большой y, но чтобы:
+  // y + bottomUpper(xu)*su <= lower.y + topLower(xl)*su  для всех колонок
+  // => y <= lower.y + topLower*su - bottomUpper*su
+  // => берём минимум по колонкам
+  let yMaxAllowed = Infinity;
+
+  const step = 2; // шаг по X в пикселях экрана
+  for(let wx = overlapLeft; wx <= overlapRight; wx += step){
+    const xu = Math.floor((wx - upper.x) / su);
+    const xl = Math.floor((wx - lower.x) / su);
+
+    if(xu < 0 || xu >= upperMeta.w) continue;
+    if(xl < 0 || xl >= lowerMeta.w) continue;
+
+    const bu = upperBotArr[xu];
+    const tl = lowerTopArr[xl];
+
+    const allowed = lower.y + tl*su - bu*su;
+    if(allowed < yMaxAllowed) yMaxAllowed = allowed;
+  }
+
+  // Финальная точка — чуть-чуть прижмём (на 1px), чтобы не оставалось микродырок из-за округления
+  const y = Math.floor(yMaxAllowed) + 1; // +1 поднимает верхний блок на 1px вниз? (аккуратно)
+  // Правильнее: прижать вниз — уменьшить y? Нет: y — верх, больше y = ниже.
+  // Чтобы "плотнее" без щели, делаем блок ЧУТЬ ВЫШЕ (меньше y):
+  return Math.round(yMaxAllowed) - 1;
 }
 
 function spawnBlock(){
@@ -622,43 +681,33 @@ function addScorePop(x,y, text){
 }
 
 function settleCurrentBlock(){
-  const top = towerTopY();
   const ground = groundY();
   const b = state.current;
 
-  let yTarget = (state.tower.length===0) ? (ground - b.h) : (top - b.h);
-
-  // Плотный прижим:
-  // 1) округляем
-  yTarget = Math.round(yTarget);
-
-  // 2) если есть предыдущий блок — прижимаем ближе (убираем микро-зазоры)
-  if(state.tower.length>0){
-    const expected = Math.round(top - b.h);
-    if(Math.abs(expected - yTarget) <= CONTACT_SNAP_PX){
-      yTarget = expected;
-    }
-    // доп. “дожим”
-    yTarget -= EXTRA_PRESS_PX;
+  let yTarget;
+  if(state.tower.length===0){
+    yTarget = Math.round(ground - b.h);
+  } else {
+    const lower = state.tower[state.tower.length - 1];
+    yTarget = computeStackY(b, lower);
   }
 
-  b.y = yTarget;
+  b.x = Math.round(b.x);
+  b.y = Math.round(yTarget);
 
   state.tower.push({
-    x: Math.round(b.x),
-    y: b.y,
-    w: b.w, h: b.h, idx: b.idx,
+    x:b.x, y:b.y, w:b.w, h:b.h, idx:b.idx,
     squash:1.0, squashV:0.0
   });
 
-  // начисляем очки
+  // очки
   state.score += SCORE_PER_BLOCK;
   scoreNum.textContent = String(state.score);
   addScorePop(W/2 + 70, b.y + 30, `+${SCORE_PER_BLOCK}`);
 
   state.current=null;
 
-  dustAt(W/2, yTarget + b.h);
+  dustAt(W/2, b.y + b.h);
   state.cameraShake = Math.max(state.cameraShake, SHAKE_ON_LAND);
   state.towerOffsetV -= 120;
 }
@@ -668,7 +717,6 @@ function boomAt(block){
   const cy = block.y + block.h/2;
 
   state.flash = Math.min(1, state.flash + 0.95);
-
   state.rings.push({ x:cx, y:cy, r:10, vr: 900, life:0.45, age:0 });
 
   for(let i=0;i<44;i++){
@@ -787,10 +835,10 @@ function update(dt){
   }
   state.rings = state.rings.filter(r => r.age < r.life);
 
-  // "+100" анимации
+  // "+100"
   for(const f of state.scoreFloats){
     f.age += dt;
-    f.vy += 260*dt;      // гравитация на текст
+    f.vy += 260*dt;
     f.x  += f.vx*dt;
     f.y  += f.vy*dt;
   }
@@ -803,8 +851,13 @@ function update(dt){
     if(state.waitingAnswer){
       // ждём
     } else if(state.dropping){
-      const top=towerTopY();
-      const yTarget = (state.tower.length===0) ? (groundY()-b.h) : (top-b.h);
+      let yTarget;
+      if(state.tower.length===0){
+        yTarget = groundY() - b.h;
+      } else {
+        const lower = state.tower[state.tower.length - 1];
+        yTarget = computeStackY(b, lower);
+      }
 
       b.y += DROP_SPEED*dt;
       if(b.y >= yTarget){
@@ -813,8 +866,8 @@ function update(dt){
         setNextEnabled(true);
       }
     } else {
-      const top=towerTopY();
-      const stopY=Math.max(80, top - b.h - 18);
+      // остановка перед вопросом
+      const stopY = Math.max(80, (state.tower.length===0 ? groundY() : state.tower[state.tower.length-1].y) - b.h - 18);
       b.y += FALL_SPEED*dt;
       if(b.y>=stopY){
         b.y=stopY;
@@ -996,7 +1049,7 @@ function checkAnswer(userValue){
   const waitingBlock = state.current;
 
   if(ok){
-    msgEl.innerHTML = `<span style="color: var(--good); font-weight:900;">Верно!</span> Блок опускается.`;
+    msgEl.innerHTML = `<span style="color: var(--good); font-weight:900;">Верно!</span> Блок опускается (+100).`;
     playGood();
     state.dropping = false;
 
@@ -1024,7 +1077,6 @@ function checkAnswer(userValue){
     }, 280);
   }
 
-  // следующий блок в любом случае
   state.blockIndex++;
 }
 
@@ -1057,7 +1109,6 @@ async function startGame(){
   ensureAudio();
   if(audioCtx.state==="suspended"){ try{ await audioCtx.resume(); }catch{} }
 
-  // reset
   Object.assign(state, {
     running:false, bg:null, blocks:[], towerScale:1,
     tower:[], current:null,
@@ -1082,8 +1133,8 @@ async function startGame(){
   for(const f of BLOCK_FILES){
     try{
       const raw = await loadImage(assetUrl(f));
-      const t = await trimAndCentroid(raw);
-      blocks.push({ file:f, img:t.img, w:t.w, h:t.h, cx:t.cx, cy:t.cy });
+      const t = await trimAndCentroidAndProfiles(raw);
+      blocks.push({ file:f, img:t.img, w:t.w, h:t.h, cx:t.cx, cy:t.cy, top:t.top, bottom:t.bottom });
     } catch {
       missing.push(f);
     }
@@ -1104,8 +1155,7 @@ async function startGame(){
 
   state.running = true;
 
-  // первый блок автоматически
-  spawnBlock();
+  spawnBlock(); // первый блок сам
 }
 
 playBtn.addEventListener("click", async ()=>{
