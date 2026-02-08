@@ -60,6 +60,15 @@
       border-radius:999px;
     }
 
+    /* счёт справа */
+    #scorePill{
+      margin-left:auto;
+    }
+    #scoreNum{
+      font-weight:900;
+      letter-spacing:.2px;
+    }
+
     /* Кнопка Далее — снизу рядом с башней */
     #nextBtn{
       position:absolute;
@@ -190,6 +199,48 @@
     }
     #err ul{ margin:8px 0 0 18px; }
     code{background:rgba(255,255,255,.08); padding:2px 6px; border-radius:8px; border:1px solid rgba(255,255,255,.12);}
+
+    /* Финальный экран */
+    #finish{
+      position:absolute; inset:0;
+      display:none; align-items:center; justify-content:center;
+      background: rgba(0,0,0,.35);
+      backdrop-filter: blur(8px);
+      z-index: 7;
+    }
+    #finishCard{
+      width:min(680px, calc(100% - 24px));
+      border-radius:20px;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(18, 20, 28, .75);
+      box-shadow: var(--shadow);
+      padding: 18px 18px 16px;
+      text-align:center;
+    }
+    #finishTitle{
+      font-size:30px; font-weight:1000; letter-spacing:.3px;
+      margin: 4px 0 8px;
+      background: linear-gradient(90deg, rgba(120,190,255,.95), rgba(120,255,170,.95));
+      -webkit-background-clip:text;
+      background-clip:text;
+      color:transparent;
+    }
+    #finishText{
+      color: rgba(255,255,255,.82);
+      font-size:18px;
+      margin: 0 0 14px;
+    }
+    #restart{
+      display:inline-flex; gap:10px; align-items:center;
+      padding:12px 14px;
+      border-radius:14px;
+      border:1px solid rgba(120,190,255,.35);
+      background: rgba(120,190,255,.22);
+      color: var(--text);
+      font-weight:900;
+      cursor:pointer;
+    }
+    #restart:hover{ background: rgba(120,190,255,.28); }
   </style>
 </head>
 <body>
@@ -203,7 +254,7 @@
       <div id="bar"><div></div></div>
       <span id="pct">0%</span>
     </div>
-    <div class="pill">Enter: подтвердить</div>
+    <div class="pill" id="scorePill">Счёт: <b id="scoreNum">0</b></div>
   </div>
 
   <button id="nextBtn" disabled>Далее →</button>
@@ -246,13 +297,23 @@
       </div>
     </div>
   </div>
+
+  <div id="finish">
+    <div id="finishCard">
+      <div id="finishTitle">Молодец!</div>
+      <div id="finishText">Тобой заработано: <b id="finishScore">0</b> баллов</div>
+      <button id="restart">↻ Сыграть ещё раз</button>
+    </div>
+  </div>
 </div>
 
 <script>
 /** ФАЙЛЫ */
-const BG_FILE = "1.png"; // фон
-// 3..11 — PNG с прозрачностью (без фона)
+const BG_FILE = "1.png";
 const BLOCK_FILES = ["3.png","4.png","5.png","6.png","7.png","8.png","9.png","10.png","11.png"];
+
+/** ОЧКИ */
+const SCORE_PER_BLOCK = 100;
 
 /** 9 вопросов */
 const QUESTIONS = [
@@ -279,15 +340,18 @@ const SHAKE_ON_LAND = 7;
 const TARGET_BLOCKS_FOR_100 = 9;
 
 /** Влезание на экран */
-const SAFE_TOP_MARGIN = 86;      // под HUD
-const SAFE_BOTTOM_MARGIN = 100;  // под землю и кнопку
+const SAFE_TOP_MARGIN = 86;
+const SAFE_BOTTOM_MARGIN = 100;
 const DESIRED_TOWER_WIDTH = () => Math.min(window.innerWidth * 0.38, 360);
 
-/** Trim/centroid */
-const TRIM_ALPHA_MIN = 18;
-const CENTROID_ALPHA_MIN = 18;
-/** Дожим контакта, чтобы не оставалось микро-зазоров */
-const CONTACT_SNAP_PX = 6;
+/** TRIM — чуть агрессивнее, чтобы убрать прозрачные каймы */
+const TRIM_ALPHA_MIN = 34;
+const CENTROID_ALPHA_MIN = 24;
+
+/** СНАП (прижать блоки вплотную) */
+const CONTACT_SNAP_PX = 10;
+/** дополнительный "дожим" всегда, если виден зазор */
+const EXTRA_PRESS_PX = 2;
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
@@ -304,12 +368,18 @@ const msgEl = document.getElementById("msg");
 const startLayer = document.getElementById("start");
 const playBtn = document.getElementById("play");
 
+const finishLayer = document.getElementById("finish");
+const finishScoreEl = document.getElementById("finishScore");
+const restartBtn = document.getElementById("restart");
+
 const errBox = document.getElementById("err");
 const errList = document.getElementById("errList");
 
 const heightTxt = document.getElementById("heightTxt");
 const pctTxt = document.getElementById("pct");
 const barFill = document.querySelector("#bar > div");
+
+const scoreNum = document.getElementById("scoreNum");
 
 const nextBtn = document.getElementById("nextBtn");
 
@@ -391,7 +461,7 @@ function loadImage(url){
   });
 }
 
-/** trim + centroid (PNG с прозрачностью) */
+/** trim + centroid */
 function trimAndCentroid(img){
   const c=document.createElement("canvas");
   c.width=img.width; c.height=img.height;
@@ -452,8 +522,8 @@ function trimAndCentroid(img){
 const state = {
   running:false,
   bg:null,
-  blocks:[],        // {file,img,w,h,cx,cy}
-  towerScale:1,     // общий масштаб
+  blocks:[],
+  towerScale:1,
 
   tower:[],
   current:null,
@@ -473,10 +543,13 @@ const state = {
   waitingAnswer:false,
   dropping:false,
 
-  blockIndex:0,     // 0..8
+  blockIndex:0,
   readyForNext:false,
 
-  finished:false
+  finished:false,
+
+  score:0,
+  scoreFloats:[] // {x,y,vx,vy,life,age,text}
 };
 
 function setNextEnabled(on){
@@ -493,23 +566,16 @@ function towerTopY(){
   return Math.min(...state.tower.map(b => b.y));
 }
 
-/** x так, чтобы центр массы был ровно по центру экрана */
 function alignedXForIdx(idx){
   const b = state.blocks[idx];
   const cxScaled = b.cx * state.towerScale;
   return (W/2) - cxScaled;
 }
-
 function blockSize(idx){
   const b = state.blocks[idx];
   return { w: b.w*state.towerScale, h: b.h*state.towerScale };
 }
 
-/** КЛЮЧЕВО: масштаб считаем по:
- *  - самому широкому блоку (чтобы башня была нужной ширины)
- *  - суммарной высоте 9 блоков (чтобы целиком влезла по экрану)
- * без “уравнивания ширин”, чтобы силуэт был как на эталоне!
- */
 function computeTowerScale(blocks){
   const maxW = Math.max(...blocks.map(b => b.w));
   const totalH = blocks.reduce((s,b)=>s+b.h,0);
@@ -522,12 +588,10 @@ function computeTowerScale(blocks){
   return Math.min(scaleByWidth, scaleByHeight);
 }
 
-/** spawn */
 function spawnBlock(){
   if(state.finished) return;
   if(state.blockIndex >= 9){
-    state.finished = true;
-    setNextEnabled(false);
+    finishGame();
     return;
   }
 
@@ -546,6 +610,17 @@ function spawnBlock(){
   setNextEnabled(false);
 }
 
+function addScorePop(x,y, text){
+  state.scoreFloats.push({
+    x, y,
+    vx: (Math.random()*2-1)*30,
+    vy: -160 - Math.random()*60,
+    life: 0.85,
+    age: 0,
+    text
+  });
+}
+
 function settleCurrentBlock(){
   const top = towerTopY();
   const ground = groundY();
@@ -553,18 +628,33 @@ function settleCurrentBlock(){
 
   let yTarget = (state.tower.length===0) ? (ground - b.h) : (top - b.h);
 
-  // дожим контакта (микропиксели)
+  // Плотный прижим:
+  // 1) округляем
+  yTarget = Math.round(yTarget);
+
+  // 2) если есть предыдущий блок — прижимаем ближе (убираем микро-зазоры)
   if(state.tower.length>0){
-    const expected = top - b.h;
-    if(Math.abs(expected - yTarget) <= CONTACT_SNAP_PX) yTarget = expected;
+    const expected = Math.round(top - b.h);
+    if(Math.abs(expected - yTarget) <= CONTACT_SNAP_PX){
+      yTarget = expected;
+    }
+    // доп. “дожим”
+    yTarget -= EXTRA_PRESS_PX;
   }
 
   b.y = yTarget;
 
   state.tower.push({
-    x:b.x, y:b.y, w:b.w, h:b.h, idx:b.idx,
+    x: Math.round(b.x),
+    y: b.y,
+    w: b.w, h: b.h, idx: b.idx,
     squash:1.0, squashV:0.0
   });
+
+  // начисляем очки
+  state.score += SCORE_PER_BLOCK;
+  scoreNum.textContent = String(state.score);
+  addScorePop(W/2 + 70, b.y + 30, `+${SCORE_PER_BLOCK}`);
 
   state.current=null;
 
@@ -627,6 +717,18 @@ function dustAt(x,y){
   }
 }
 
+function finishGame(){
+  state.finished = true;
+  setNextEnabled(false);
+  finishScoreEl.textContent = String(state.score);
+  finishLayer.style.display="flex";
+}
+
+restartBtn.addEventListener("click", async ()=>{
+  finishLayer.style.display="none";
+  startLayer.style.display="flex";
+});
+
 /** Update */
 function update(dt){
   if(!state.running) return;
@@ -684,6 +786,15 @@ function update(dt){
     r.r += r.vr*dt;
   }
   state.rings = state.rings.filter(r => r.age < r.life);
+
+  // "+100" анимации
+  for(const f of state.scoreFloats){
+    f.age += dt;
+    f.vy += 260*dt;      // гравитация на текст
+    f.x  += f.vx*dt;
+    f.y  += f.vy*dt;
+  }
+  state.scoreFloats = state.scoreFloats.filter(f => f.age < f.life);
 
   // текущий блок
   if(state.current){
@@ -757,6 +868,28 @@ function drawBlock(o, glow=false, squash=1.0){
   ctx.restore();
 }
 
+function drawScorePops(){
+  for(const f of state.scoreFloats){
+    const t = f.age / f.life;
+    const a = Math.max(0, 1 - t);
+    const s = 1 + (1 - a) * 0.15;
+
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.translate(f.x, f.y);
+    ctx.scale(s, s);
+
+    ctx.font = "900 22px system-ui, -apple-system, Segoe UI, Roboto, Arial";
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = "rgba(0,0,0,.35)";
+    ctx.strokeText(f.text, 0, 0);
+    ctx.fillStyle = "rgba(120,255,170,.95)";
+    ctx.fillText(f.text, 0, 0);
+
+    ctx.restore();
+  }
+}
+
 function draw(){
   ctx.clearRect(0,0,W,H);
 
@@ -767,18 +900,10 @@ function draw(){
 
   for(const b of state.tower){
     drawBlock(b, false, b.squash);
-    ctx.fillStyle="rgba(0,0,0,.18)";
-    ctx.beginPath();
-    ctx.ellipse(b.x+b.w/2, b.y+b.h+10, b.w*0.38, 8, 0, 0, Math.PI*2);
-    ctx.fill();
   }
 
   if(state.current){
     drawBlock(state.current, true, 1.0);
-    ctx.fillStyle="rgba(0,0,0,.22)";
-    ctx.beginPath();
-    ctx.ellipse(state.current.x+state.current.w/2, state.current.y+state.current.h+10, state.current.w*0.42, 9, 0, 0, Math.PI*2);
-    ctx.fill();
   }
 
   for(const s of state.smokes){
@@ -808,6 +933,8 @@ function draw(){
     ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
     ctx.fill();
   }
+
+  drawScorePops();
 
   if(state.flash>0){
     ctx.fillStyle = `rgba(255,255,255,${state.flash*0.22})`;
@@ -879,6 +1006,7 @@ function checkAnswer(userValue){
       if(state.current) state.dropping = true;
       else setNextEnabled(true);
     }, 220);
+
   } else {
     msgEl.innerHTML = `<span style="color: var(--bad); font-weight:900;">Неверно!</span> Блок взрывается и исчезает.`;
     state.dropping = false;
@@ -896,7 +1024,7 @@ function checkAnswer(userValue){
     }, 280);
   }
 
-  // переходим к следующему блоку (в любом случае) — 9 попыток = 9 частей
+  // следующий блок в любом случае
   state.blockIndex++;
 }
 
@@ -915,8 +1043,7 @@ nextBtn.addEventListener("click", ()=>{
 
   state.questionIndex++;
   if(state.questionIndex >= 9){
-    state.finished = true;
-    setNextEnabled(false);
+    finishGame();
     return;
   }
   spawnBlock();
@@ -939,8 +1066,11 @@ async function startGame(){
     towerOffsetY:0, towerOffsetV:0,
     questionIndex:0, waitingAnswer:false, dropping:false,
     blockIndex:0, readyForNext:false,
-    finished:false
+    finished:false,
+    score:0,
+    scoreFloats:[]
   });
+  scoreNum.textContent = "0";
   setNextEnabled(false);
 
   const missing=[];
@@ -969,13 +1099,12 @@ async function startGame(){
     return;
   }
 
-  // вот тут главное отличие: НЕ выравниваем ширины частей, сохраняем “конусность”
   state.towerScale = computeTowerScale(blocks);
   state.blocks = blocks;
 
   state.running = true;
 
-  // первый блок — автоматически
+  // первый блок автоматически
   spawnBlock();
 }
 
