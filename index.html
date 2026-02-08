@@ -249,17 +249,12 @@
 </div>
 
 <script>
-/**
- * ВАЖНО:
- * - 3..11 — PNG с прозрачным фоном (без вырезания белого)
- * - 9 блоков, 9 вопросов
- */
+/** ФАЙЛЫ */
+const BG_FILE = "1.png"; // фон
+// 3..11 — PNG с прозрачностью (без фона)
+const BLOCK_FILES = ["3.png","4.png","5.png","6.png","7.png","8.png","9.png","10.png","11.png"];
 
-const BG_FILE = "1.png";
-const BLOCK_FILES = [
-  "3.png","4.png","5.png","6.png","7.png","8.png","9.png","10.png","11.png"
-];
-
+/** 9 вопросов */
 const QUESTIONS = [
   { type:"choice", q:"Сколько будет 7 × 8?", options:["54","56","58","64"], answer:"56" },
   { type:"choice", q:"Столица Франции?", options:["Лион","Париж","Марсель","Ницца"], answer:"Париж" },
@@ -272,23 +267,27 @@ const QUESTIONS = [
   { type:"choice", q:"JS в браузере нужен для…", options:["Интерактивности","Фона","Сжатия PNG","DNS"], answer:"Интерактивности" },
 ];
 
+/** Динамика */
 const FALL_SPEED = 620;
 const DROP_SPEED = 900;
 
+/** Эффекты */
 const SHAKE_ON_BOOM = 18;
 const SHAKE_ON_LAND = 7;
 
+/** Прогресс */
 const TARGET_BLOCKS_FOR_100 = 9;
 
-/** Подгон башни так, чтобы 9 блоков помещались по высоте */
-const SAFE_TOP_MARGIN = 86;   // под HUD
-const SAFE_BOTTOM_MARGIN = 90; // под кнопку и “землю”
-const TARGET_TOWER_SCREEN_W = () => Math.min(window.innerWidth * 0.34, 300);
+/** Влезание на экран */
+const SAFE_TOP_MARGIN = 86;      // под HUD
+const SAFE_BOTTOM_MARGIN = 100;  // под землю и кнопку
+const DESIRED_TOWER_WIDTH = () => Math.min(window.innerWidth * 0.38, 360);
 
-/** Trim */
-const TRIM_ALPHA_MIN = 20;      // PNG уже чистые, можно мягче
-const CENTROID_ALPHA_MIN = 20;  // центр массы
-const CONTACT_SNAP_PX = 4;
+/** Trim/centroid */
+const TRIM_ALPHA_MIN = 18;
+const CENTROID_ALPHA_MIN = 18;
+/** Дожим контакта, чтобы не оставалось микро-зазоров */
+const CONTACT_SNAP_PX = 6;
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
@@ -392,7 +391,7 @@ function loadImage(url){
   });
 }
 
-/** trim + centroid (для PNG с прозрачностью) */
+/** trim + centroid (PNG с прозрачностью) */
 function trimAndCentroid(img){
   const c=document.createElement("canvas");
   c.width=img.width; c.height=img.height;
@@ -453,8 +452,8 @@ function trimAndCentroid(img){
 const state = {
   running:false,
   bg:null,
-  blocks:[], // {file,img,w,h,cx,cy,scaleToTower}
-  towerScale:1,
+  blocks:[],        // {file,img,w,h,cx,cy}
+  towerScale:1,     // общий масштаб
 
   tower:[],
   current:null,
@@ -470,11 +469,11 @@ const state = {
   towerOffsetY:0,
   towerOffsetV:0,
 
-  questionIndex:0,     // 0..8
+  questionIndex:0,
   waitingAnswer:false,
   dropping:false,
 
-  blockIndex:0,        // 0..8  <-- ЭТО ВАЖНО (исправляет "всегда один блок")
+  blockIndex:0,     // 0..8
   readyForNext:false,
 
   finished:false
@@ -485,48 +484,41 @@ function setNextEnabled(on){
   nextBtn.disabled = !on;
 }
 
-function towerTopY(){
-  const ground = H - 70 + state.towerOffsetY;
-  if(state.tower.length===0) return ground;
-  return Math.min(...state.tower.map(b => b.y));
-}
 function groundY(){
   return H - 70 + state.towerOffsetY;
 }
+function towerTopY(){
+  const ground = groundY();
+  if(state.tower.length===0) return ground;
+  return Math.min(...state.tower.map(b => b.y));
+}
 
-/** x так, чтобы центр массы был по центру экрана */
+/** x так, чтобы центр массы был ровно по центру экрана */
 function alignedXForIdx(idx){
-  const block = state.blocks[idx];
-  const scale = state.towerScale * block.scaleToTower;
-  const cxScaled = block.cx * scale;
-  const towerCenter = W/2;
-  return towerCenter - cxScaled;
+  const b = state.blocks[idx];
+  const cxScaled = b.cx * state.towerScale;
+  return (W/2) - cxScaled;
 }
 
 function blockSize(idx){
   const b = state.blocks[idx];
-  const scale = state.towerScale * b.scaleToTower;
-  return { w: b.w*scale, h: b.h*scale, scale };
+  return { w: b.w*state.towerScale, h: b.h*state.towerScale };
 }
 
-/** Подгоняем towerScale так, чтобы:
- *  1) ширина (по первому блоку) была красивая
- *  2) вся башня из 9 блоков помещалась по высоте экрана
+/** КЛЮЧЕВО: масштаб считаем по:
+ *  - самому широкому блоку (чтобы башня была нужной ширины)
+ *  - суммарной высоте 9 блоков (чтобы целиком влезла по экрану)
+ * без “уравнивания ширин”, чтобы силуэт был как на эталоне!
  */
 function computeTowerScale(blocks){
-  const w0 = blocks[0].w; // после trim
-  // сначала сделаем нормализацию ширины под первый блок
-  for(const b of blocks) b.scaleToTower = w0 / b.w;
+  const maxW = Math.max(...blocks.map(b => b.w));
+  const totalH = blocks.reduce((s,b)=>s+b.h,0);
 
-  // 1) масштаб по ширине (красиво)
-  const scaleByWidth = TARGET_TOWER_SCREEN_W() / w0;
+  const scaleByWidth = DESIRED_TOWER_WIDTH() / maxW;
 
-  // 2) масштаб по высоте, чтобы 9 блоков влезли
-  const totalHeightNormalized = blocks.reduce((sum,b)=> sum + b.h*(w0/b.w), 0); // h * scaleToTower
   const availableH = Math.max(220, H - SAFE_TOP_MARGIN - SAFE_BOTTOM_MARGIN);
-  const scaleByHeight = availableH / totalHeightNormalized;
+  const scaleByHeight = availableH / totalH;
 
-  // берём меньший, чтобы точно влезло
   return Math.min(scaleByWidth, scaleByHeight);
 }
 
@@ -549,8 +541,8 @@ function spawnBlock(){
     y: -h - 30
   };
 
-  state.dropping = false;
-  state.waitingAnswer = false;
+  state.dropping=false;
+  state.waitingAnswer=false;
   setNextEnabled(false);
 }
 
@@ -561,13 +553,10 @@ function settleCurrentBlock(){
 
   let yTarget = (state.tower.length===0) ? (ground - b.h) : (top - b.h);
 
-  // “дожим” контакта (если где-то микро-зазор)
-  if(state.tower.length > 0){
+  // дожим контакта (микропиксели)
+  if(state.tower.length>0){
     const expected = top - b.h;
-    const gap = expected - yTarget;
-    if(Math.abs(gap) <= CONTACT_SNAP_PX){
-      yTarget = expected;
-    }
+    if(Math.abs(expected - yTarget) <= CONTACT_SNAP_PX) yTarget = expected;
   }
 
   b.y = yTarget;
@@ -577,10 +566,9 @@ function settleCurrentBlock(){
     squash:1.0, squashV:0.0
   });
 
-  state.current = null;
+  state.current=null;
 
   dustAt(W/2, yTarget + b.h);
-
   state.cameraShake = Math.max(state.cameraShake, SHAKE_ON_LAND);
   state.towerOffsetV -= 120;
 }
@@ -705,8 +693,7 @@ function update(dt){
       // ждём
     } else if(state.dropping){
       const top=towerTopY();
-      const ground=groundY();
-      const yTarget = (state.tower.length===0) ? (ground-b.h) : (top-b.h);
+      const yTarget = (state.tower.length===0) ? (groundY()-b.h) : (top-b.h);
 
       b.y += DROP_SPEED*dt;
       if(b.y >= yTarget){
@@ -742,7 +729,6 @@ function drawBackground(){
   } else {
     ctx.fillStyle="#0b0f18"; ctx.fillRect(0,0,W,H);
   }
-
   const grd=ctx.createRadialGradient(W*0.5,H*0.45,60, W*0.5,H*0.5, Math.max(W,H)*0.7);
   grd.addColorStop(0,"rgba(0,0,0,0)");
   grd.addColorStop(1,"rgba(0,0,0,0.45)");
@@ -893,7 +879,6 @@ function checkAnswer(userValue){
       if(state.current) state.dropping = true;
       else setNextEnabled(true);
     }, 220);
-
   } else {
     msgEl.innerHTML = `<span style="color: var(--bad); font-weight:900;">Неверно!</span> Блок взрывается и исчезает.`;
     state.dropping = false;
@@ -904,17 +889,14 @@ function checkAnswer(userValue){
 
       if(waitingBlock && waitingBlock === state.current){
         boomAt(waitingBlock);
-        state.current = null;
-      } else {
-        state.current = null;
       }
+      state.current = null;
 
-      // можно идти дальше
       setNextEnabled(true);
     }, 280);
   }
 
-  // после ответа (верно/неверно) переходим к следующему вопросу/блоку
+  // переходим к следующему блоку (в любом случае) — 9 попыток = 9 частей
   state.blockIndex++;
 }
 
@@ -931,7 +913,6 @@ document.addEventListener("keydown",(e)=>{
 nextBtn.addEventListener("click", ()=>{
   if(nextBtn.disabled) return;
 
-  // следующий вопрос
   state.questionIndex++;
   if(state.questionIndex >= 9){
     state.finished = true;
@@ -949,33 +930,17 @@ async function startGame(){
   ensureAudio();
   if(audioCtx.state==="suspended"){ try{ await audioCtx.resume(); }catch{} }
 
-  state.running=false;
-  state.bg=null;
-  state.blocks=[];
-  state.towerScale=1;
-
-  state.tower=[];
-  state.current=null;
-
-  state.particles=[];
-  state.smokes=[];
-  state.rings=[];
-  state.flash=0;
-
-  state.cameraShake=0;
-  state.cameraX=0; state.cameraY=0;
-
-  state.towerOffsetY=0;
-  state.towerOffsetV=0;
-
-  state.questionIndex=0;
-  state.waitingAnswer=false;
-  state.dropping=false;
-
-  state.blockIndex=0;
-  state.readyForNext=false;
-  state.finished=false;
-
+  // reset
+  Object.assign(state, {
+    running:false, bg:null, blocks:[], towerScale:1,
+    tower:[], current:null,
+    particles:[], smokes:[], rings:[], flash:0,
+    cameraShake:0, cameraX:0, cameraY:0,
+    towerOffsetY:0, towerOffsetV:0,
+    questionIndex:0, waitingAnswer:false, dropping:false,
+    blockIndex:0, readyForNext:false,
+    finished:false
+  });
   setNextEnabled(false);
 
   const missing=[];
@@ -988,7 +953,7 @@ async function startGame(){
     try{
       const raw = await loadImage(assetUrl(f));
       const t = await trimAndCentroid(raw);
-      blocks.push({ file:f, img:t.img, w:t.w, h:t.h, cx:t.cx, cy:t.cy, scaleToTower:1 });
+      blocks.push({ file:f, img:t.img, w:t.w, h:t.h, cx:t.cx, cy:t.cy });
     } catch {
       missing.push(f);
     }
@@ -1004,6 +969,7 @@ async function startGame(){
     return;
   }
 
+  // вот тут главное отличие: НЕ выравниваем ширины частей, сохраняем “конусность”
   state.towerScale = computeTowerScale(blocks);
   state.blocks = blocks;
 
