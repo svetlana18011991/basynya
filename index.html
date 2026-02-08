@@ -14,6 +14,7 @@
       --good: rgba(120, 255, 170, .95);
       --bad: rgba(255, 120, 140, .95);
       --shadow: 0 18px 60px rgba(0,0,0,.35);
+      --neon: rgba(0, 255, 120, .95);
     }
     html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:var(--text);overflow:hidden;background:#000;}
     #wrap{position:relative;width:100%;height:100%;}
@@ -49,15 +50,17 @@
     }
     #bar{
       height:10px; flex:1;
-      background:rgba(255,255,255,.12);
+      background:rgba(255,255,255,.10);
       border-radius:999px;
       overflow:hidden;
       border:1px solid rgba(255,255,255,.10);
     }
+    /* ✅ НЕОНОВО-ЗЕЛЁНАЯ ПОЛОСКА */
     #bar>div{
       height:100%; width:0%;
-      background: linear-gradient(90deg, rgba(120,190,255,.9), rgba(120,255,170,.85));
+      background: linear-gradient(90deg, rgba(0,255,120,.95), rgba(0,255,180,.95));
       border-radius:999px;
+      box-shadow: 0 0 14px rgba(0,255,140,.35), 0 0 28px rgba(0,255,140,.18);
     }
 
     #scorePill{ margin-left:auto; }
@@ -87,6 +90,19 @@
     #nextBtn:active{ transform: translateX(160px) scale(.99); }
     #nextBtn[disabled]{ opacity:.45; cursor:not-allowed; filter:saturate(.7); }
 
+    /* ✅ пульсация, когда доступна */
+    #nextBtn.ready{
+      animation: pulse 1.25s ease-in-out infinite;
+      box-shadow:
+        0 18px 60px rgba(0,0,0,.35),
+        0 0 0 0 rgba(120,190,255,.35);
+    }
+    @keyframes pulse{
+      0%   { transform: translateX(160px) scale(1);   filter:saturate(1);   box-shadow: 0 18px 60px rgba(0,0,0,.35), 0 0 0 0 rgba(120,190,255,.40); }
+      50%  { transform: translateX(160px) scale(1.02);filter:saturate(1.12);box-shadow: 0 18px 60px rgba(0,0,0,.35), 0 0 0 10px rgba(120,190,255,.00); }
+      100% { transform: translateX(160px) scale(1);   filter:saturate(1);   box-shadow: 0 18px 60px rgba(0,0,0,.35), 0 0 0 0 rgba(120,190,255,.00); }
+    }
+
     #overlay{
       position:absolute; inset:0;
       display:none; align-items:center; justify-content:center;
@@ -107,6 +123,7 @@
       transition: transform .18s ease, opacity .18s ease;
       will-change: transform, opacity;
     }
+    /* ✅ анимация появления карточки */
     #overlay.show #card{
       transform: translateY(0) scale(1);
       opacity: 1;
@@ -304,7 +321,7 @@
       </div>
 
       <div id="msg"></div>
-      <div id="hint">Верно → блок опускается и становится этажом (+100). Неверно → обугливание, взрыв и исчезает.</div>
+      <div id="hint">Верно → блок опускается и становится этажом (+100). Неверно → обугливание, взрыв и исчезновение.</div>
     </div>
   </div>
 
@@ -312,7 +329,7 @@
     <div id="startCard">
       <h1>Башня знаний</h1>
       <p>
-        Первый блок падает сам. Дальше — нажимай <b>Далее</b>.
+        Первый блок падает сам (быстро). Дальше — нажимай <b>Далее</b>.
         Когда блок остановится — ответь на вопрос.
         <br/>Верно → блок опускается и становится этажом (+100).
         <br/>Неверно → блок обугливается, взрывается и исчезает.
@@ -362,8 +379,9 @@ const QUESTIONS = [
   { type:"choice", q:"JS в браузере нужен для…", options:["Интерактивности","Фона","Сжатия PNG","DNS"], answer:"Интерактивности" },
 ];
 
-/** Динамика */
-const FALL_SPEED = 620;
+/** Скорости */
+const FALL_SPEED = 760;
+const FIRST_FALL_SPEED = 980;   // ✅ первый блок быстрее
 const DROP_SPEED = 900;
 
 /** Эффекты */
@@ -383,9 +401,13 @@ const TRIM_ALPHA_MIN = 34;
 const PROFILE_ALPHA_MIN = 22;
 const CENTROID_ALPHA_MIN = 24;
 
-/** Пружинящий “bounce” при приземлении */
-const LAND_BOUNCE_UP = 10;      // px вверх перед финальным прижатием
-const LAND_BOUNCE_TIME = 0.10;  // сек
+/** Пружинящее приземление */
+const LAND_BOUNCE_UP = 10;
+const LAND_BOUNCE_TIME = 0.10;
+
+/** Фейерверк */
+const FIREWORKS_TIME_PERFECT = 2.8; // сек при 9/9
+const FIREWORKS_TIME_SMALL   = 1.4; // сек иначе
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
@@ -588,6 +610,7 @@ const state = {
   smokes:[],
   rings:[],
   sparks:[],
+  fireworks:[],
   flash:0,
 
   cameraShake:0,
@@ -611,23 +634,23 @@ const state = {
   correct:0,
   wrong:0,
 
-  // bounce state
   landingBounce: null, // {fromY,toY,age,dur}
+  fireworksTimer: 0,   // сек
+  fireworksBurstTimer: 0
 };
 
-/** HUD helpers */
+/** HUD */
 function setNextEnabled(on){
   state.readyForNext = on;
   nextBtn.disabled = !on;
+  nextBtn.classList.toggle("ready", !!on);
 }
 function updateRemain(){
   const remain = Math.max(0, 9 - state.questionIndex);
   remainNum.textContent = String(remain);
 }
 
-function groundY(){
-  return H - 70 + state.towerOffsetY;
-}
+function groundY(){ return H - 70 + state.towerOffsetY; }
 function alignedXForIdx(idx){
   const b = state.blocks[idx];
   const cxScaled = b.cx * state.towerScale;
@@ -646,7 +669,7 @@ function computeTowerScale(blocks){
   return Math.min(scaleByWidth, scaleByHeight);
 }
 
-/** Пиксельно точный стек */
+/** Pixel perfect stack */
 function computeStackY(upper, lower){
   const su = state.towerScale;
   const upperMeta = state.blocks[upper.idx];
@@ -674,7 +697,6 @@ function computeStackY(upper, lower){
     const allowed = lower.y + tl*su - bu*su;
     if(allowed < yMaxAllowed) yMaxAllowed = allowed;
   }
-  // плотнее без щелей
   return Math.round(yMaxAllowed) - 1;
 }
 
@@ -686,7 +708,10 @@ function spawnBlock(){
   const idx = state.blockIndex;
   const {w,h} = blockSize(idx);
 
-  state.current = { idx, w,h, x: alignedXForIdx(idx), y: -h - 30, char:0 };
+  // ✅ первый блок появляется "раньше" (меньше отрицательный y)
+  const startY = (idx === 0) ? (-h * 0.55) : (-h - 30);
+
+  state.current = { idx, w,h, x: alignedXForIdx(idx), y: startY, char:0 };
   state.dropping=false;
   state.waitingAnswer=false;
   state.landingBounce=null;
@@ -695,17 +720,10 @@ function spawnBlock(){
 
 /** score pop */
 function addScorePop(x,y, text){
-  state.scoreFloats.push({
-    x, y,
-    vx: (Math.random()*2-1)*30,
-    vy: -160 - Math.random()*60,
-    life: 0.85,
-    age: 0,
-    text
-  });
+  state.scoreFloats.push({ x, y, vx:(Math.random()*2-1)*30, vy:-160-Math.random()*60, life:0.85, age:0, text });
 }
 
-/** sparks at seam */
+/** sparks */
 function sparksAtSeam(x, y){
   for(let i=0;i<18;i++){
     const a = (-Math.PI/2) + (Math.random()*Math.PI*0.9 - Math.PI*0.45);
@@ -720,8 +738,6 @@ function sparksAtSeam(x, y){
     });
   }
 }
-
-/** smoke/dust */
 function dustAt(x,y){
   for(let i=0;i<10;i++){
     const a=Math.random()*Math.PI*2;
@@ -738,10 +754,9 @@ function dustAt(x,y){
   }
 }
 
-/** settle with bounce */
+/** landing bounce */
 function settleCurrentBlock(){
   const b = state.current;
-
   let yFinal;
   if(state.tower.length===0){
     yFinal = Math.round(groundY() - b.h);
@@ -750,22 +765,16 @@ function settleCurrentBlock(){
     yFinal = computeStackY(b, lower);
   }
 
-  // bounce: сначала чуть выше, потом вниз в финал
   const yUp = Math.max(-200, yFinal - LAND_BOUNCE_UP);
   state.landingBounce = { fromY: yUp, toY: yFinal, age: 0, dur: LAND_BOUNCE_TIME };
 
   b.x = Math.round(b.x);
   b.y = yUp;
-
-  // Запомним временно “собираемый” блок, добавим в башню только после bounce
 }
-
-/** finalize land */
 function finalizeLand(){
   const b = state.current;
   if(!b) return;
 
-  // искры из шва (x по центру башни, y на стыке)
   const seamY = b.y + b.h;
   sparksAtSeam(W/2, seamY);
 
@@ -776,7 +785,6 @@ function finalizeLand(){
     squash:1.0, squashV:0.0
   });
 
-  // очки
   state.score += SCORE_PER_BLOCK;
   scoreNum.textContent = String(state.score);
   addScorePop(W/2 + 70, b.y + 30, `+${SCORE_PER_BLOCK}`);
@@ -788,7 +796,7 @@ function finalizeLand(){
   state.current = null;
 }
 
-/** boom + scorch */
+/** boom */
 function boomAt(block){
   const cx = block.x + block.w/2;
   const cy = block.y + block.h/2;
@@ -826,6 +834,29 @@ function boomAt(block){
   playBoom();
 }
 
+/** fireworks */
+function spawnFireworkBurst(){
+  const cx = W*0.18 + Math.random()*W*0.64;
+  const cy = H*0.12 + Math.random()*H*0.28;
+
+  const count = 42 + Math.floor(Math.random()*22);
+  const hue = Math.random(); // 0..1
+
+  for(let i=0;i<count;i++){
+    const a = Math.random()*Math.PI*2;
+    const sp = 140 + Math.random()*520;
+    state.fireworks.push({
+      x:cx, y:cy,
+      vx: Math.cos(a)*sp,
+      vy: Math.sin(a)*sp - (120 + Math.random()*180),
+      life: 0.9 + Math.random()*0.7,
+      age: 0,
+      hue,
+      r: 1.6 + Math.random()*2.2
+    });
+  }
+}
+
 /** finish */
 function finishGame(){
   state.finished = true;
@@ -836,6 +867,10 @@ function finishGame(){
   stWrong.textContent = String(state.wrong);
   stHeight.textContent = String(state.tower.length);
 
+  // ✅ запускаем фейерверк
+  state.fireworksTimer = (state.correct === 9) ? FIREWORKS_TIME_PERFECT : FIREWORKS_TIME_SMALL;
+  state.fireworksBurstTimer = 0;
+
   finishLayer.style.display="flex";
 }
 
@@ -845,7 +880,7 @@ restartBtn.addEventListener("click", async ()=>{
   startLayer.style.display="flex";
 });
 
-/** card show/hide with animation */
+/** overlay anim */
 function showOverlayAnimated(){
   overlay.style.display="flex";
   requestAnimationFrame(()=> overlay.classList.add("show"));
@@ -855,11 +890,10 @@ function hideOverlayAnimated(){
   setTimeout(()=>{ overlay.style.display="none"; }, 140);
 }
 
-/** Update */
+/** update loop */
 function update(dt){
   if(!state.running) return;
 
-  // remain
   updateRemain();
 
   // camera shake
@@ -893,63 +927,67 @@ function update(dt){
   }
 
   // particles
-  for(const p of state.particles){
-    p.age += dt; p.vy += 980*dt; p.x += p.vx*dt; p.y += p.vy*dt;
-  }
+  for(const p of state.particles){ p.age+=dt; p.vy+=980*dt; p.x+=p.vx*dt; p.y+=p.vy*dt; }
   state.particles = state.particles.filter(p => p.age < p.life);
 
   // smoke
-  for(const s of state.smokes){
-    s.age += dt; s.vy += 120*dt; s.x += s.vx*dt; s.y += s.vy*dt;
-  }
+  for(const s of state.smokes){ s.age+=dt; s.vy+=120*dt; s.x+=s.vx*dt; s.y+=s.vy*dt; }
   state.smokes = state.smokes.filter(s => s.age < s.life);
 
-  // ring
-  for(const r of state.rings){
-    r.age += dt; r.r += r.vr*dt;
-  }
+  // rings
+  for(const r of state.rings){ r.age+=dt; r.r+=r.vr*dt; }
   state.rings = state.rings.filter(r => r.age < r.life);
 
   // sparks
   for(const sp of state.sparks){
-    sp.age += dt;
-    sp.vy += 980*dt;
-    sp.x += sp.vx*dt;
-    sp.y += sp.vy*dt;
+    sp.age+=dt; sp.vy+=980*dt; sp.x+=sp.vx*dt; sp.y+=sp.vy*dt;
     sp.vx *= (1 - dt*1.8);
   }
   state.sparks = state.sparks.filter(s => s.age < s.life);
 
   // score floats
-  for(const f of state.scoreFloats){
-    f.age += dt; f.vy += 260*dt; f.x += f.vx*dt; f.y += f.vy*dt;
-  }
+  for(const f of state.scoreFloats){ f.age+=dt; f.vy+=260*dt; f.x+=f.vx*dt; f.y+=f.vy*dt; }
   state.scoreFloats = state.scoreFloats.filter(f => f.age < f.life);
 
-  // bounce step
+  // fireworks
+  if(state.fireworksTimer > 0){
+    state.fireworksTimer = Math.max(0, state.fireworksTimer - dt);
+    state.fireworksBurstTimer += dt;
+    const interval = (state.correct === 9) ? 0.18 : 0.30;
+    if(state.fireworksBurstTimer >= interval){
+      state.fireworksBurstTimer = 0;
+      spawnFireworkBurst();
+    }
+  }
+  for(const fw of state.fireworks){
+    fw.age += dt;
+    fw.vy += 520*dt;
+    fw.x += fw.vx*dt;
+    fw.y += fw.vy*dt;
+    fw.vx *= (1 - dt*0.6);
+  }
+  state.fireworks = state.fireworks.filter(f => f.age < f.life);
+
+  // bounce
   if(state.landingBounce && state.current){
     const bb = state.landingBounce;
     bb.age += dt;
     const t = Math.min(1, bb.age / bb.dur);
-    // easing
     const ease = 1 - Math.pow(1 - t, 3);
     state.current.y = Math.round(bb.fromY + (bb.toY - bb.fromY)*ease);
 
-    // чуть “сжатие” нижнего блока
     if(state.tower.length>0){
-      const last = state.tower[state.tower.length-1];
-      last.squashV += 14 * dt;
+      state.tower[state.tower.length-1].squashV += 14 * dt;
     }
 
     if(t >= 1){
       state.landingBounce = null;
-      // финальный y уже стоит, фиксируем блок как этаж
       finalizeLand();
       setNextEnabled(true);
     }
   }
 
-  // current block movement
+  // current movement
   if(state.current && !state.landingBounce){
     const b = state.current;
 
@@ -957,24 +995,22 @@ function update(dt){
       // wait
     } else if(state.dropping){
       let yTarget;
-      if(state.tower.length===0){
-        yTarget = groundY() - b.h;
-      } else {
-        const lower = state.tower[state.tower.length - 1];
-        yTarget = computeStackY(b, lower);
-      }
+      if(state.tower.length===0) yTarget = groundY() - b.h;
+      else yTarget = computeStackY(b, state.tower[state.tower.length - 1]);
 
       b.y += DROP_SPEED*dt;
       if(b.y >= yTarget){
         b.y = yTarget;
-        // начинаем bounce
         settleCurrentBlock();
       }
     } else {
-      // stop before question
+      // ✅ первый блок быстрее падает к вопросу
+      const v = (b.idx === 0) ? FIRST_FALL_SPEED : FALL_SPEED;
+
       const topY = (state.tower.length===0 ? groundY() : state.tower[state.tower.length-1].y);
       const stopY = Math.max(80, topY - b.h - 18);
-      b.y += FALL_SPEED*dt;
+
+      b.y += v*dt;
       if(b.y>=stopY){
         b.y=stopY;
         state.waitingAnswer=true;
@@ -990,7 +1026,7 @@ function update(dt){
   barFill.style.width = pct + "%";
 }
 
-/** Draw */
+/** draw */
 function drawBackground(){
   if(state.bg){
     const img=state.bg;
@@ -1027,13 +1063,12 @@ function drawBlock(o, glow=false, squash=1.0, char=0){
 
   ctx.drawImage(img, o.x, o.y, o.w, o.h);
 
-  // эффект обугливания (черная полупрозрачная маска)
+  // scorch
   if(char > 0){
     ctx.globalCompositeOperation = "source-atop";
     ctx.fillStyle = `rgba(0,0,0,${0.70*char})`;
     ctx.fillRect(o.x-2, o.y-2, o.w+4, o.h+4);
 
-    // чуть красноватого “жара”
     ctx.globalCompositeOperation = "screen";
     ctx.fillStyle = `rgba(255,120,60,${0.10*char})`;
     ctx.fillRect(o.x-2, o.y-2, o.w+4, o.h+4);
@@ -1061,14 +1096,12 @@ function drawScorePops(){
     ctx.strokeText(f.text, 0, 0);
     ctx.fillStyle = "rgba(120,255,170,.95)";
     ctx.fillText(f.text, 0, 0);
-
     ctx.restore();
   }
 }
 
 function draw(){
   ctx.clearRect(0,0,W,H);
-
   ctx.save();
   ctx.translate(state.cameraX, state.cameraY);
 
@@ -1077,7 +1110,6 @@ function draw(){
   for(const b of state.tower){
     drawBlock(b, false, b.squash, 0);
   }
-
   if(state.current){
     drawBlock(state.current, true, 1.0, state.current.char || 0);
   }
@@ -1116,12 +1148,27 @@ function draw(){
     ctx.stroke();
   }
 
-  // particles
+  // explosion particles
   for(const p of state.particles){
     const a = 1 - (p.age/p.life);
     ctx.fillStyle = `rgba(255, 200, 120, ${0.78*a})`;
     ctx.beginPath();
     ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // fireworks
+  for(const fw of state.fireworks){
+    const t = fw.age / fw.life;
+    const a = Math.max(0, 1 - t);
+    // HSV-ish → RGB простенько
+    const h = (fw.hue + t*0.25) % 1;
+    const r = Math.round(140 + 115*Math.sin(h*6.283));
+    const g = Math.round(180 + 75*Math.sin((h+0.33)*6.283));
+    const b = Math.round(200 + 55*Math.sin((h+0.66)*6.283));
+    ctx.fillStyle = `rgba(${r},${g},${b},${0.9*a})`;
+    ctx.beginPath();
+    ctx.arc(fw.x, fw.y, fw.r, 0, Math.PI*2);
     ctx.fill();
   }
 
@@ -1174,8 +1221,14 @@ function showQuestion(){
     ansInput.value="";
   }
 
-  showOverlayAnimated();
+  overlay.style.display="flex";
+  requestAnimationFrame(()=> overlay.classList.add("show"));
   setTimeout(()=>{ if(q.type==="input") ansInput.focus(); }, 50);
+}
+
+function hideQuestion(){
+  overlay.classList.remove("show");
+  setTimeout(()=>{ overlay.style.display="none"; }, 140);
 }
 
 function checkAnswer(userValue){
@@ -1191,7 +1244,7 @@ function checkAnswer(userValue){
     state.dropping = false;
 
     setTimeout(()=>{
-      hideOverlayAnimated();
+      hideQuestion();
       state.waitingAnswer = false;
       if(state.current) state.dropping = true;
       else setNextEnabled(true);
@@ -1202,15 +1255,12 @@ function checkAnswer(userValue){
     msgEl.innerHTML = `<span style="color: var(--bad); font-weight:900;">Неверно!</span> Блок обугливается и исчезает.`;
     state.dropping = false;
 
-    // обугливание (0.35 сек), потом взрыв и исчезновение
     const scorchDur = 0.35;
     let elapsed = 0;
-
     function scorchStep(){
       if(!state.current || state.current !== waitingBlock) return;
       elapsed += 1/60;
       state.current.char = Math.min(1, elapsed / scorchDur);
-      // немного дыма
       if(Math.random() < 0.25){
         state.smokes.push({
           x: waitingBlock.x + waitingBlock.w/2 + (Math.random()*30-15),
@@ -1222,21 +1272,18 @@ function checkAnswer(userValue){
           rad: 14+Math.random()*18
         });
       }
-      if(elapsed < scorchDur){
-        requestAnimationFrame(scorchStep);
-      }
+      if(elapsed < scorchDur) requestAnimationFrame(scorchStep);
     }
     requestAnimationFrame(scorchStep);
 
     setTimeout(()=>{
-      hideOverlayAnimated();
+      hideQuestion();
       state.waitingAnswer = false;
 
       if(waitingBlock && waitingBlock === state.current){
         boomAt(waitingBlock);
       }
       state.current = null;
-
       setNextEnabled(true);
     }, 520);
   }
@@ -1274,20 +1321,38 @@ async function startGame(){
   if(audioCtx.state==="suspended"){ try{ await audioCtx.resume(); }catch{} }
 
   Object.assign(state, {
-    running:false, bg:null, blocks:[], towerScale:1,
-    tower:[], current:null,
-    particles:[], smokes:[], rings:[], sparks:[], flash:0,
-    cameraShake:0, cameraX:0, cameraY:0,
-    towerOffsetY:0, towerOffsetV:0,
-    questionIndex:0, waitingAnswer:false, dropping:false,
-    blockIndex:0, readyForNext:false,
+    running:false,
+    bg:null,
+    blocks:[],
+    towerScale:1,
+    tower:[],
+    current:null,
+    particles:[],
+    smokes:[],
+    rings:[],
+    sparks:[],
+    fireworks:[],
+    flash:0,
+    cameraShake:0,
+    cameraX:0,
+    cameraY:0,
+    towerOffsetY:0,
+    towerOffsetV:0,
+    questionIndex:0,
+    waitingAnswer:false,
+    dropping:false,
+    blockIndex:0,
+    readyForNext:false,
     finished:false,
     score:0,
     scoreFloats:[],
     correct:0,
     wrong:0,
     landingBounce:null,
+    fireworksTimer:0,
+    fireworksBurstTimer:0
   });
+
   scoreNum.textContent = "0";
   setNextEnabled(false);
   updateRemain();
@@ -1320,12 +1385,12 @@ async function startGame(){
 
   state.towerScale = computeTowerScale(blocks);
   state.blocks = blocks;
-
   state.running = true;
 
-  spawnBlock(); // первый блок сам
+  spawnBlock(); // ✅ первый блок сам и быстрее
 }
 
+/** main loops */
 playBtn.addEventListener("click", async ()=>{
   startLayer.style.display="none";
   await startGame();
